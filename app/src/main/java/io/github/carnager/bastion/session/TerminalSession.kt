@@ -253,6 +253,22 @@ class TerminalSession(
     suspend fun canSudoQuietly(): Boolean =
         sudoPassword != null || runCatching { execResult("sudo -n true", null).second == 0 }.getOrDefault(false)
 
+    val hasSudoPassword: Boolean get() = sudoPassword != null
+
+    fun forgetSudoPassword() {
+        sudoPassword = null
+    }
+
+    /** Types the session's sudo password into a password prompt (not echoed, not recorded). */
+    fun typeSudoPassword(): Boolean {
+        val password = sudoPassword ?: return false
+        send((password + "\r").encodeToByteArray())
+        return true
+    }
+
+    /** The last command run in this session, to tell a sudo "Password:" prompt from others. */
+    @Volatile var lastCommand: String? = null
+
     fun setSudoPassword(password: String) {
         sudoPassword = password
     }
@@ -297,7 +313,7 @@ class TerminalSession(
         }
         if (bytes.contains(CR)) {
             // The screen still shows the line as typed: the server hasn't echoed the newline yet.
-            prompt?.let { p -> CommandLine.current(view, p)?.takeIf { it.isNotBlank() }?.let(onCommand) }
+            prompt?.let { p -> CommandLine.current(view, p)?.takeIf { it.isNotBlank() }?.let { lastCommand = it; onCommand(it) } }
             typedSinceEnter = false
         }
     }
@@ -320,7 +336,10 @@ class TerminalSession(
         if (shell == null) return
         send(CommandLine.replaceLine(text, run))
         if (run) {
-            if (text.isNotBlank()) onCommand(text.trim())
+            if (text.isNotBlank()) {
+                lastCommand = text.trim()
+                onCommand(text.trim())
+            }
             typedSinceEnter = false
         } else {
             typedSinceEnter = true

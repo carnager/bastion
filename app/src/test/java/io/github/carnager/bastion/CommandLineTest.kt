@@ -87,3 +87,25 @@ class GhostTextTest {
         org.junit.Assert.assertEquals("❯ ls x", CommandLine.withoutGhostText("❯ ls x", 4, null))
     }
 }
+
+class SudoPromptTest {
+    private fun at(line: String, last: String? = null, above: String = "") =
+        CommandLine.atSudoPrompt(Screen(listOf(above, line), listOf(false, false), 1, line.length, false), last)
+
+    @Test fun recognisesSudoAndDoasPrompts() {
+        org.junit.Assert.assertTrue(at("[sudo] password for carnager: "))
+        org.junit.Assert.assertTrue(at("doas (carnager@proteus) password: "))
+        org.junit.Assert.assertTrue(at("Password:", last = "sudo systemctl restart caddy"))
+    }
+
+    @Test fun otherPasswordPromptsAreLeftAlone() {
+        org.junit.Assert.assertFalse(at("Password:", last = "su -"))
+        org.junit.Assert.assertFalse(at("carnager@host's password: ", last = "ssh host"))
+        org.junit.Assert.assertFalse(at("❯ echo [sudo] password for x: done"))
+    }
+
+    @Test fun retryIsNoticed() {
+        val s = Screen(listOf("Sorry, try again.", "[sudo] password for carnager: "), listOf(false, false), 1, 30, false)
+        org.junit.Assert.assertTrue(CommandLine.sudoRetry(s))
+    }
+}

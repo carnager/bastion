@@ -165,6 +165,17 @@ fun TerminalScreen(
             value = session.prompt?.let { p -> session.screen.read()?.let { CommandLine.current(it, p) } }
         }
     }
+    // A sudo/doas password prompt under the cursor: offer to fill the session's password.
+    val atSudo by produceState(false, session) {
+        session.screen.changes?.collectLatest {
+            delay(80)
+            val screen = session.screen.read()
+            val prompt = screen != null && CommandLine.atSudoPrompt(screen, session.lastCommand)
+            if (prompt && screen != null && CommandLine.sudoRetry(screen)) session.forgetSudoPassword()
+            value = prompt
+        }
+    }
+    var askSudo by remember { mutableStateOf(false) }
     val suggestions = remember(typed, history, suggestionsEnabled) {
         if (suggestionsEnabled) CommandLine.suggestions(history, typed.orEmpty()) else emptyList()
     }
@@ -267,7 +278,13 @@ fun TerminalScreen(
             )
         }
         if (editing == null) {
-            if (suggestions.isNotEmpty() && status is SessionStatus.Connected) {
+            if (atSudo && status is SessionStatus.Connected) {
+                SudoStrip(
+                    hasPassword = session.hasSudoPassword,
+                    onFill = { if (!session.typeSudoPassword()) askSudo = true },
+                    onEnter = { askSudo = true },
+                )
+            } else if (suggestions.isNotEmpty() && status is SessionStatus.Connected) {
                 SuggestionStrip(suggestions) { picked ->
                     val current = typed.orEmpty()
                     if (picked.startsWith(current)) session.send(picked.removePrefix(current).encodeToByteArray())
@@ -309,6 +326,18 @@ fun TerminalScreen(
                     }
                 }
             },
+        )
+    }
+    if (askSudo) {
+        SudoPasswordDialog(
+            host = session.host.label,
+            wrong = false,
+            onSubmit = { password ->
+                askSudo = false
+                session.setSudoPassword(password)
+                session.typeSudoPassword()
+            },
+            onDismiss = { askSudo = false },
         )
     }
     if (menuOpen) {
@@ -400,6 +429,30 @@ private fun SessionBar(
         IconButton(onClick = onMenu, modifier = Modifier.size(Dimens.barHeight)) {
             Icon(Ico.more, "Session menu", tint = KeyText, modifier = Modifier.size(20.dp))
         }
+    }
+}
+
+/** Shown while sudo asks for a password: one tap fills it in. */
+@Composable
+private fun SudoStrip(hasPassword: Boolean, onFill: () -> Unit, onEnter: () -> Unit) {
+    val chrome = LocalChrome.current
+    Row(
+        Modifier.fillMaxWidth().background(chrome.bar).padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(Ico.shield, null, Modifier.size(18.dp), tint = chrome.accent)
+        Text("sudo wants your password", color = chrome.fg, fontSize = 14.sp, modifier = Modifier.weight(1f))
+        if (hasPassword) {
+            Text(
+                "Other", color = chrome.key, fontSize = 14.sp,
+                modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable(onClick = onEnter).padding(horizontal = 10.dp, vertical = 7.dp),
+            )
+        }
+        Text(
+            if (hasPassword) "Fill password" else "Enter password", color = chrome.bg, fontSize = 14.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            modifier = Modifier.clip(RoundedCornerShape(16.dp)).background(chrome.accent).clickable(onClick = if (hasPassword) onFill else onEnter)
+                .padding(horizontal = 14.dp, vertical = 7.dp),
+        )
     }
 }
 

@@ -98,6 +98,23 @@ object CommandLine {
         return (prefix + inside).distinct().take(limit)
     }
 
+    private val SUDO_PROMPT = Regex("""(\[sudo] password for [^:]+|doas \([^)]+\) password|\[sudo: authenticate] Password):\s*$""")
+
+    /**
+     * The cursor sits on a sudo/doas password prompt. "Password:" alone counts only right
+     * after a sudo command, so ssh or su prompts aren't mistaken for it.
+     */
+    fun atSudoPrompt(screen: Screen, lastCommand: String?): Boolean {
+        if (screen.alternateScreen) return false
+        val line = screen.cursorLine.substring(0, minOf(screen.cursorCol, screen.cursorLine.length)).trimEnd() + " "
+        if (SUDO_PROMPT.containsMatchIn(line)) return true
+        return line.trim() == "Password:" && lastCommand?.trimStart()?.startsWith("sudo ") == true
+    }
+
+    /** sudo rejected the password just typed (the line above the new prompt says so). */
+    fun sudoRetry(screen: Screen): Boolean =
+        screen.lines.getOrNull(screen.cursorRow - 1)?.trim()?.startsWith("Sorry, try again") == true
+
     /** Bytes that make the shell's line read [text]: end of line, kill to start, then the text. */
     fun replaceLine(text: String, run: Boolean): ByteArray =
         ("\u0005\u0015" + text + if (run) "\r" else "").encodeToByteArray()

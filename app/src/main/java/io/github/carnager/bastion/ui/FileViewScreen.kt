@@ -78,6 +78,7 @@ fun FileViewScreen(
     var saving by remember { mutableStateOf(false) }
     var dialog by remember { mutableStateOf<String?>(null) } // "conflict", "permission", "discard"
     val listState = rememberLazyListState()
+    val sudo = rememberSudoRunner(session)
 
     LaunchedEffect(path, reloadTick) {
         error = null
@@ -183,6 +184,7 @@ fun FileViewScreen(
         }
     }
 
+    sudo.Dialogs()
     when (dialog) {
         "conflict" -> AlertDialog(
             onDismissRequest = { dialog = null },
@@ -196,8 +198,8 @@ fun FileViewScreen(
             title = { Text("No permission to write") },
             text = {
                 Text(
-                    "Save with sudo? Your version is uploaded to a private temp file and copied over $name with sudo in the terminal, " +
-                        "where sudo may ask for your password. The file keeps its owner and permissions.",
+                    "Save with sudo? Your version is uploaded to a private temp file and copied over $name as root. " +
+                        "The file keeps its owner and permissions.",
                 )
             },
             confirmButton = {
@@ -208,7 +210,13 @@ fun FileViewScreen(
                         runCatching { session.writeTemp(text) }
                             .onSuccess { tmp ->
                                 val q = shellQuote(tmp)
-                                onRunInTerminal("sudo cp -- $q ${shellQuote(target)} && rm -f -- $q")
+                                // cp onto the existing file keeps owner and mode; the temp file goes either way.
+                                sudo.run("Saving…", "cp -- $q ${shellQuote(target)}; s=\$?; rm -f -- $q; exit \$s") {
+                                    scope.launch { modified = session.modifiedTime(target) }
+                                    file = file?.copy(text = text)
+                                    editing = false
+                                    Snack.show("Saved $name with sudo")
+                                }
                             }
                             .onFailure { Snack.show("Couldn’t upload: ${it.message}") }
                     }

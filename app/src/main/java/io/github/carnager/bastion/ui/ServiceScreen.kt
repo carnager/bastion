@@ -68,31 +68,10 @@ fun ServiceScreen(
     var tick by remember { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
-    var busy by remember { mutableStateOf<String?>(null) }
-    var askPassword by remember { mutableStateOf<Pair<Boolean, suspend () -> Unit>?>(null) } // (wrong before, retry)
-    var failure by remember { mutableStateOf<String?>(null) }
+    val sudo = rememberSudoRunner(session)
     val q = shellQuote(unit)
 
-    /** Runs [command] as root in the background; asks for the sudo password natively if needed. */
-    suspend fun sudo(label: String, command: String, onOk: (String) -> Unit) {
-        busy = label
-        val result = try {
-            session.execSudo(command)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            SudoResult.Failed(e.message ?: e.javaClass.simpleName, -1)
-        }
-        busy = null
-        when (result) {
-            is SudoResult.Ok -> onOk(result.output)
-            SudoResult.NeedsPassword -> askPassword = false to suspend { sudo(label, command, onOk) }
-            SudoResult.WrongPassword -> askPassword = true to suspend { sudo(label, command, onOk) }
-            is SudoResult.Failed -> failure = result.output.ifBlank { "Exit status ${result.code}" }
-        }
-    }
-
-    suspend fun loadSudoLog() = sudo("Reading log…", Services.journalCommand(unit)) { out ->
+    fun loadSudoLog() = sudo.run("Reading log…", Services.journalCommand(unit)) { out ->
         val (lines, note) = Services.parseJournal(out)
         log = lines
         notice = note ?: if (lines.isEmpty()) "No log entries for this service." else null
@@ -115,13 +94,9 @@ fun ServiceScreen(
         }
     }
 
-    fun act(label: String, done: String, command: String) {
-        scope.launch {
-            sudo(label, command) {
-                Snack.show(done)
-                tick++
-            }
-        }
+    fun act(label: String, done: String, command: String) = sudo.run(label, command) {
+        Snack.show(done)
+        tick++
     }
     Column(Modifier.fillMaxSize()) {
         ScreenHeader(unit, onNav = onBack) {
@@ -135,34 +110,15 @@ fun ServiceScreen(
                 i.loadState == "not-found" -> item { WarnBanner { Text("No service called “$unit” on ${session.host.label}.", Modifier.weight(1f), fontSize = 13.sp, color = extra.warnFg) } }
                 else -> {
                     item(key = "state") { StateCard(i) }
-                    item(key = "actions") { Actions(i, q, busy, ::act, onRunInTerminal) }
+                    item(key = "actions") { Actions(i, q, sudo.busy, ::act, onRunInTerminal) }
                     item(key = "details") { Details(i) }
-                    logSection(log, notice) { scope.launch { loadSudoLog() } }
+                    logSection(log, notice) { loadSudoLog() }
                 }
             }
         }
     }
 
-    askPassword?.let { (wrong, retry) ->
-        SudoPasswordDialog(
-            host = session.host.label,
-            wrong = wrong,
-            onSubmit = { password ->
-                askPassword = null
-                session.setSudoPassword(password)
-                scope.launch { retry() }
-            },
-            onDismiss = { askPassword = null },
-        )
-    }
-    failure?.let { output ->
-        AlertDialog(
-            onDismissRequest = { failure = null },
-            title = { Text("That didn’t work") },
-            text = { Text(output.take(1500), style = MonoStyle, fontSize = 12.5.sp) },
-            confirmButton = { TextButton(onClick = { failure = null }) { Text("OK") } },
-        )
-    }
+    sudo.Dialogs()
 }
 
 /** Asks for the sudo password; kept in memory for this session only. */
