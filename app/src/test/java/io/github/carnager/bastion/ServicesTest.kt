@@ -64,3 +64,20 @@ class ServicesTest {
         assertEquals(listOf("a", "z", "f", "e", "b"), sorted.map { it.value })
     }
 }
+
+class StructuredLogTest {
+    @Test fun caddyLineIsFlattened() {
+        val line = """{"level":"error","ts":1794520400.62,"logger":"http.log.error","msg":"dial tcp 127.0.0.1:5234: connect: connection refused","request":{"method":"GET","host":"example.org","uri":"/backup.zip","headers":{"Accept":["*/*"]}},"duration":0.0002,"status":502}"""
+        val log = io.github.carnager.bastion.session.StructuredLog.parse(line)!!
+        assertEquals("error", log.level)
+        assertEquals("dial tcp 127.0.0.1:5234: connect: connection refused", log.message)
+        assertEquals(listOf("status" to "502", "method" to "GET", "host" to "example.org", "uri" to "/backup.zip", "duration" to "0.0002"), log.highlights)
+        assertTrue(log.fields.any { it.first == "request.headers" })
+        assertEquals(3, io.github.carnager.bastion.session.StructuredLog.priorityOf("ERROR"))
+    }
+
+    @Test fun plainTextIsNotStructured() {
+        assertNull(io.github.carnager.bastion.session.StructuredLog.parse("Started Caddy web server."))
+        assertNull(io.github.carnager.bastion.session.StructuredLog.parse("{not json"))
+    }
+}

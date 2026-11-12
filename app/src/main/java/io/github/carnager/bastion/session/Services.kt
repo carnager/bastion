@@ -111,3 +111,50 @@ sealed interface SudoResult {
                 "Authentication failure" in output
     }
 }
+
+/** A JSON log message (caddy, many Go/Node services) flattened for display. */
+data class StructuredLog(val level: String?, val message: String?, val fields: List<Pair<String, String>>) {
+    /** The handful of fields worth showing collapsed. */
+    val highlights: List<Pair<String, String>>
+        get() {
+            val wanted = listOf("status", "request.method", "request.host", "host", "request.uri", "uri", "path", "duration", "error", "err", "logger")
+            val byKey = fields.toMap()
+            return wanted.mapNotNull { k -> byKey[k]?.let { k.substringAfterLast('.') to it } }.take(5)
+        }
+
+    companion object {
+        private val json = Json { ignoreUnknownKeys = true }
+        private val LEVEL_KEYS = listOf("level", "lvl", "severity", "loglevel")
+        private val MESSAGE_KEYS = listOf("msg", "message", "event")
+
+        fun parse(message: String): StructuredLog? {
+            val trimmed = message.trim()
+            if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null
+            val obj = runCatching { json.parseToJsonElement(trimmed) as JsonObject }.getOrNull() ?: return null
+            val flat = mutableListOf<Pair<String, String>>()
+            fun walk(prefix: String, element: kotlinx.serialization.json.JsonElement, depth: Int) {
+                when (element) {
+                    is JsonObject -> if (depth < 2) element.forEach { (k, v) -> walk(if (prefix.isEmpty()) k else "$prefix.$k", v, depth + 1) }
+                        else flat += prefix to element.toString()
+                    is JsonArray -> flat += prefix to element.joinToString(", ") { (it as? JsonPrimitive)?.content ?: it.toString() }
+                    is JsonPrimitive -> flat += prefix to element.content
+                }
+            }
+            walk("", obj, 0)
+            val level = LEVEL_KEYS.firstNotNullOfOrNull { k -> flat.firstOrNull { it.first == k }?.second }
+            val msg = MESSAGE_KEYS.firstNotNullOfOrNull { k -> flat.firstOrNull { it.first == k }?.second }
+            val rest = flat.filterNot { it.first in LEVEL_KEYS || it.first in MESSAGE_KEYS || it.first == "ts" || it.first == "time" || it.first == "timestamp" }
+            return StructuredLog(level, msg, rest)
+        }
+
+        /** syslog-like priority from a level name, if it says more than the journal does. */
+        fun priorityOf(level: String?): Int? = when (level?.lowercase()) {
+            "fatal", "panic", "critical", "crit" -> 2
+            "error", "err" -> 3
+            "warn", "warning" -> 4
+            "info" -> 6
+            "debug", "trace" -> 7
+            else -> null
+        }
+    }
+}

@@ -34,6 +34,9 @@ import androidx.compose.ui.unit.sp
 import io.github.carnager.bastion.session.LogLine
 import io.github.carnager.bastion.session.ServiceInfo
 import io.github.carnager.bastion.session.Services
+import io.github.carnager.bastion.session.StructuredLog
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import io.github.carnager.bastion.session.SudoResult
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
@@ -291,17 +294,53 @@ private fun LazyListScope.logSection(log: List<LogLine>?, notice: String?, onSud
 
 @Composable
 private fun LogRow(line: LogLine) {
+    val structured = remember(line) { StructuredLog.parse(line.message) }
+    var expanded by remember { mutableStateOf(false) }
+    val priority = StructuredLog.priorityOf(structured?.level)?.let { minOf(it, line.priority) } ?: line.priority
     val color = when {
-        line.priority <= 3 -> extra.red
-        line.priority == 4 -> Palette.Amber
+        priority <= 3 -> extra.red
+        priority == 4 -> Palette.Amber
         else -> extra.fg
     }
-    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
-        Text(
-            DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM).format(Date(line.timeMicros / 1000)),
-            fontSize = 11.sp, color = extra.muted,
-        )
-        Text(line.message, style = MonoStyle, fontSize = 12.5.sp, color = color)
+    Column(
+        Modifier.fillMaxWidth().then(if (structured != null) Modifier.clickable { expanded = !expanded } else Modifier)
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            structured?.level?.let { level ->
+                Text(
+                    level.uppercase(), fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = color,
+                    modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(color.copy(alpha = 0.14f)).padding(horizontal = 5.dp, vertical = 1.dp),
+                )
+            }
+            Text(
+                DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM).format(Date(line.timeMicros / 1000)),
+                fontSize = 11.sp, color = extra.muted,
+            )
+        }
+        if (structured == null) {
+            Text(line.message, style = MonoStyle, fontSize = 12.5.sp, color = color)
+        } else {
+            Text(structured.message ?: "(no message)", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (priority <= 4) color else extra.fg)
+            val shown = if (expanded) structured.fields else structured.highlights
+            if (shown.isNotEmpty()) {
+                if (expanded) {
+                    shown.forEach { (k, v) ->
+                        Row {
+                            Text(k, style = MonoStyle, fontSize = 11.5.sp, color = extra.muted, modifier = Modifier.width(120.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(v, style = MonoStyle, fontSize = 11.5.sp, color = extra.fg2)
+                        }
+                    }
+                } else {
+                    Text(
+                        shown.joinToString("  ·  ") { (k, v) -> "$k $v" },
+                        style = MonoStyle, fontSize = 11.5.sp, color = extra.fg2, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (!expanded) Text("Tap for all ${structured.fields.size} fields", fontSize = 11.sp, color = extra.muted)
+        }
     }
 }
 
