@@ -2,6 +2,11 @@ package io.github.carnager.bastion.ui
 
 import android.app.Activity
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.text.TextRange
@@ -238,24 +243,34 @@ fun TerminalScreen(
             }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(chrome.line))
-        val edit = editing
-        if (edit != null) {
+        // While the input field is open it replaces the keys row: those keys don't apply to it.
+        AnimatedVisibility(
+            visible = editing != null,
+            enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
+            exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut(),
+        ) {
+            // Keep showing the last text while the panel animates out.
+            var last by remember { mutableStateOf(TextFieldValue()) }
+            editing?.let { last = it }
             CommandEditor(
-                value = edit,
+                value = last,
                 onValueChange = { editing = it },
                 history = if (suggestionsEnabled) history else emptyList(),
                 onRun = { text -> session.replaceLine(text, run = true); closeEditor() },
                 onInsert = { text -> session.replaceLine(text, run = false); closeEditor() },
                 onClose = closeEditor,
             )
-        } else if (suggestions.isNotEmpty() && status is SessionStatus.Connected) {
-            SuggestionStrip(suggestions) { picked ->
-                val current = typed.orEmpty()
-                if (picked.startsWith(current)) session.send(picked.removePrefix(current).encodeToByteArray())
-                else session.replaceLine(picked, run = false)
-            }
         }
-        ExtraKeys(session, modifiers, onEdit = openEditor, onFind = { finding = true })
+        if (editing == null) {
+            if (suggestions.isNotEmpty() && status is SessionStatus.Connected) {
+                SuggestionStrip(suggestions) { picked ->
+                    val current = typed.orEmpty()
+                    if (picked.startsWith(current)) session.send(picked.removePrefix(current).encodeToByteArray())
+                    else session.replaceLine(picked, run = false)
+                }
+            }
+            ExtraKeys(session, modifiers, onEdit = openEditor, onFind = { finding = true })
+        }
     }
     }
 

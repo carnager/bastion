@@ -82,25 +82,21 @@ internal fun CommandEditor(
                 onValueChange(TextFieldValue(picked, TextRange(picked.length)))
             }
         }
+        // The field: full width, roomy, with its own clear button.
+        val shape = RoundedCornerShape(14.dp)
         Row(
-            Modifier.fillMaxWidth().padding(start = 4.dp, end = 6.dp, top = 4.dp, bottom = 6.dp),
+            Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, top = 6.dp).heightIn(min = 50.dp)
+                .clip(shape).background(chrome.bg).border(1.5.dp, chrome.accent, shape).padding(start = 14.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            IconAction(Ico.close, "Close input field", onClose, tint = chrome.key, size = 40.dp)
-            val shape = RoundedCornerShape(12.dp)
-            Box(
-                Modifier.weight(1f).heightIn(min = 44.dp).clip(shape).background(chrome.bg).border(1.5.dp, chrome.accent, shape)
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                contentAlignment = Alignment.CenterStart,
-            ) {
-                if (value.text.isEmpty()) Text("Command", color = chrome.key.copy(alpha = 0.5f), style = MonoStyle, fontSize = 14.sp)
+            Box(Modifier.weight(1f).padding(vertical = 12.dp), contentAlignment = Alignment.CenterStart) {
+                if (value.text.isEmpty()) Text("Type a command", color = chrome.key.copy(alpha = 0.5f), fontSize = 15.sp)
                 BasicTextField(
                     value = value,
                     // Enter runs; a pasted newline shouldn't sneak a second command in.
                     onValueChange = { onValueChange(it.copy(text = it.text.replace('\n', ' '))) },
                     modifier = Modifier.fillMaxWidth().focusRequester(focus),
-                    textStyle = MonoStyle.copy(color = chrome.fg, fontSize = 14.sp),
+                    textStyle = MonoStyle.copy(color = chrome.fg, fontSize = 15.sp, letterSpacing = 0.sp),
                     cursorBrush = SolidColor(chrome.accent),
                     maxLines = 5,
                     keyboardOptions = KeyboardOptions(
@@ -112,13 +108,41 @@ internal fun CommandEditor(
                     keyboardActions = KeyboardActions(onSend = { onRun(value.text) }),
                 )
             }
-            IconAction(Ico.insert, "Insert without running", { onInsert(value.text) }, tint = chrome.key, size = 40.dp)
-            Box(
-                Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(chrome.accent).clickable { onRun(value.text) },
-                contentAlignment = Alignment.Center,
-            ) { Icon(Ico.enter, "Run", Modifier.size(20.dp), tint = chrome.bg) }
+            if (value.text.isNotEmpty()) {
+                IconAction(Ico.close, "Clear", { onValueChange(TextFieldValue("")) }, tint = chrome.key, iconSize = 18.dp, size = 40.dp)
+            }
+        }
+        // Actions, spelled out.
+        Row(
+            Modifier.fillMaxWidth().padding(start = 4.dp, end = 10.dp, top = 6.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            BarButton("Cancel", onClose, color = chrome.key)
+            androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+            BarButton("Insert", { onInsert(value.text) }, color = chrome.fg, outlined = true)
+            Row(
+                Modifier.heightIn(min = 40.dp).clip(RoundedCornerShape(20.dp)).background(chrome.accent)
+                    .clickable { onRun(value.text) }.padding(horizontal = 18.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text("Run", color = chrome.bg, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Icon(Ico.enter, null, Modifier.size(17.dp), tint = chrome.bg)
+            }
         }
     }
+}
+
+@Composable
+private fun BarButton(label: String, onClick: () -> Unit, color: androidx.compose.ui.graphics.Color, outlined: Boolean = false) {
+    val chrome = LocalChrome.current
+    val shape = RoundedCornerShape(20.dp)
+    Box(
+        Modifier.heightIn(min = 40.dp).clip(shape)
+            .then(if (outlined) Modifier.border(1.dp, chrome.line, shape) else Modifier)
+            .clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 9.dp),
+        contentAlignment = Alignment.Center,
+    ) { Text(label, color = color, fontSize = 15.sp, fontWeight = FontWeight.Medium) }
 }
 
 /** Matching history while typing straight into the terminal. */
@@ -133,16 +157,17 @@ internal fun SuggestionStrip(items: List<String>, onPick: (String) -> Unit) {
 private fun SuggestionChips(items: List<String>, onPick: (String) -> Unit) {
     val chrome = LocalChrome.current
     LazyRow(
-        Modifier.fillMaxWidth().height(40.dp),
-        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 5.dp),
+        Modifier.fillMaxWidth().height(44.dp),
+        contentPadding = PaddingValues(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         items(items) { item ->
-            Box(
-                Modifier.widthIn(max = 280.dp).fillMaxHeight().clip(RoundedCornerShape(8.dp)).background(chrome.keyBg)
-                    .clickable { onPick(item) }.padding(horizontal = 10.dp),
-                contentAlignment = Alignment.CenterStart,
+            Row(
+                Modifier.widthIn(max = 280.dp).fillMaxHeight().clip(RoundedCornerShape(16.dp)).background(chrome.keyBg)
+                    .clickable { onPick(item) }.padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                Icon(Ico.history, null, Modifier.size(13.dp), tint = chrome.key.copy(alpha = 0.7f))
                 Text(item, color = chrome.fg, style = MonoStyle, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
