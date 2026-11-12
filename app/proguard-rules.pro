@@ -9,3 +9,5 @@
 -dontwarn sun.security.**
 -dontwarn org.ietf.jgss.**
 -dontwarn javax.security.auth.**
+# BouncyCastle LDAP/DANE helpers reference JNDI, which Android lacks; never used here.
+-dontwarn javax.naming.**

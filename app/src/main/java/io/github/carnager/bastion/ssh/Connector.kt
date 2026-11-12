@@ -43,6 +43,9 @@ class Connector(private val store: VaultRepository, private val prompter: Prompt
         serverKeyVerifier = VaultHostKeyVerifier()
         forwardingFilter = AcceptAllForwardingFilter.INSTANCE
         CoreModuleProperties.HEARTBEAT_INTERVAL.set(this, Duration.ofSeconds(30))
+        // Send keystrokes immediately (like OpenSSH for interactive sessions) instead of
+        // letting Nagle hold small packets back until the previous one is acknowledged.
+        CoreModuleProperties.TCP_NODELAY.set(this, true)
         start()
     }
 
