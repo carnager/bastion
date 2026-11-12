@@ -71,11 +71,13 @@ fun FinderDialog(
     session: TerminalSession,
     history: List<String>,
     onPick: (text: String, kind: FinderKind) -> Unit,
+    /** Run a command in the shell (cd, open in editor), replacing what's typed. */
+    onRun: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val cwd = remember { session.guessCwd() }
     var base by rememberSaveable { mutableStateOf(cwd) }
-    var kind by rememberSaveable { mutableStateOf(FinderKind.FILES) }
+    var kind by rememberSaveable { mutableStateOf(FinderKind.BROWSE) }
     var query by rememberSaveable { mutableStateOf("") }
     var refreshTick by remember { mutableIntStateOf(0) }
     var items by remember { mutableStateOf<List<String>?>(null) }
@@ -91,6 +93,7 @@ fun FinderDialog(
     val searchQuery = if (pathMode) query.substringAfterLast('/', "") else query
 
     LaunchedEffect(kind, searchBase, refreshTick) {
+        if (kind == FinderKind.BROWSE) return@LaunchedEffect // BrowsePane lists over SFTP itself
         if (pathMode) delay(250) // don't list every folder on the way while typing a path
         items = null
         error = null
@@ -111,7 +114,8 @@ fun FinderDialog(
         val all = items ?: return@LaunchedEffect
         results = withContext(Dispatchers.Default) { Fuzzy.filter(searchQuery, all) }
     }
-    LaunchedEffect(Unit) { focus.requestFocus() }
+    // Browsing is mostly tapping, so only searching tabs open the keyboard right away.
+    LaunchedEffect(kind) { if (kind != FinderKind.BROWSE) runCatching { focus.requestFocus() } }
 
     fun pick(match: Fuzzy.Match) {
         val text = when (kind) {
@@ -139,7 +143,8 @@ fun FinderDialog(
                     Box(Modifier.weight(1f)) {
                         if (query.isEmpty()) {
                         Text(
-                            if (kind == FinderKind.FILES || kind == FinderKind.FOLDERS) "Fuzzy search, or type a /path"
+                            if (kind == FinderKind.BROWSE) "Filter this folder, or type a /path"
+                            else if (kind == FinderKind.FILES || kind == FinderKind.FOLDERS) "Fuzzy search, or type a /path"
                             else "Fuzzy search ${kind.label.lowercase()}",
                             color = extra.muted, fontSize = 15.sp,
                         )
@@ -160,6 +165,15 @@ fun FinderDialog(
                 ) {
                     FinderKind.entries.forEach { k -> SelectChip(k.label, kind == k) { kind = k } }
                 }
+                if (kind == FinderKind.BROWSE) {
+                    BrowsePane(
+                        session = session,
+                        query = query,
+                        onQueryChange = { query = it },
+                        onInsert = { text -> onPick(text, FinderKind.BROWSE) },
+                        onRun = onRun,
+                    )
+                } else {
                 // Where we're searching
                 if (kind == FinderKind.FILES || kind == FinderKind.FOLDERS) {
                     Row(
@@ -199,6 +213,7 @@ fun FinderDialog(
                         ResultRow(match, kind) { pick(match) }
                     }
                 }
+                }
             }
         }
     }
@@ -235,6 +250,7 @@ private fun ResultRow(match: Fuzzy.Match, kind: FinderKind, onClick: () -> Unit)
                 FinderKind.FOLDERS -> Ico.folder
                 FinderKind.COMMANDS -> Ico.term
                 FinderKind.HISTORY -> Ico.history
+                FinderKind.BROWSE -> Ico.folder
             },
             null, Modifier.size(18.dp), tint = extra.muted,
         )

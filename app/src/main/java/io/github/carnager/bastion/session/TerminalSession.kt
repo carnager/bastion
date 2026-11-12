@@ -17,6 +17,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.apache.sshd.client.channel.ChannelShell
+import org.apache.sshd.sftp.client.SftpClient
+import org.apache.sshd.sftp.client.SftpClientFactory
 import org.connectbot.terminal.TerminalEmulator
 import org.connectbot.terminal.TerminalEmulatorFactory
 import java.time.Duration
@@ -88,6 +90,35 @@ class TerminalSession(
         val items = RemoteLists.parse(exec(command), kind)
         synchronized(listCache) { listCache[key] = System.currentTimeMillis() to items }
         return items
+    }
+
+    @Volatile private var sftp: SftpClient? = null
+
+    private fun sftpClient(): SftpClient {
+        sftp?.takeIf { it.isOpen }?.let { return it }
+        val conn = connection ?: throw IllegalStateException("Not connected")
+        return SftpClientFactory.instance().createSftpClient(conn.session).also { sftp = it }
+    }
+
+    /** Lists a folder over SFTP on this connection. "~" and "~/…" are resolved against the home folder. */
+    suspend fun listDirectory(path: String): RemoteDir = withContext(Dispatchers.IO) {
+        val client = sftpClient()
+        val home = client.canonicalPath(".")
+        val wanted = when {
+            path == "~" -> home
+            path.startsWith("~/") -> home.trimEnd('/') + "/" + path.removePrefix("~/")
+            else -> path
+        }
+        val dir = client.canonicalPath(wanted)
+        val entries = client.readDir(dir).mapNotNull { entry ->
+            val name = entry.filename
+            if (name == "." || name == "..") return@mapNotNull null
+            val full = if (dir == "/") "/$name" else "$dir/$name"
+            val attrs = entry.attributes
+            val isDir = attrs.isDirectory || (attrs.isSymbolicLink && runCatching { client.stat(full).isDirectory }.getOrDefault(false))
+            RemoteEntry(name, full, isDir, attrs.isSymbolicLink, attrs.size, attrs.modifyTime?.toMillis() ?: 0L)
+        }.sortedWith(compareByDescending<RemoteEntry> { it.isDir }.thenBy { it.name.lowercase() })
+        RemoteDir(dir, home, entries)
     }
 
     /** Runs [command] on a separate exec channel of the same SSH connection; nothing reaches the shell. */
@@ -213,6 +244,8 @@ class TerminalSession(
     private fun finish(error: String?) {
         if (_status.value is SessionStatus.Ended) return
         shell = null
+        runCatching { sftp?.close() }
+        sftp = null
         connection?.close()
         connection = null
         val note = if (error == null) "Connection closed." else "Error: $error"
@@ -228,6 +261,8 @@ class TerminalSession(
     }
 
     fun close() {
+        runCatching { sftp?.close() }
+        sftp = null
         job?.cancel()
         schemeJob.cancel()
         shell = null

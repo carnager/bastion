@@ -100,6 +100,7 @@ dependencies {
     implementation("org.connectbot:termlib:0.3.15")
     // SSH: Apache MINA SSHD, with the full BouncyCastle provider and i2p EdDSA for Ed25519 keys.
     implementation("org.apache.sshd:sshd-core:2.20.1")
+    implementation("org.apache.sshd:sshd-sftp:2.20.1")
     implementation("org.bouncycastle:bcprov-jdk18on:1.87")
     implementation("org.bouncycastle:bcpkix-jdk18on:1.87")
     implementation("net.i2p.crypto:eddsa:0.3.0")

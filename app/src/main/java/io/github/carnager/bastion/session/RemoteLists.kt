@@ -1,6 +1,31 @@
 package io.github.carnager.bastion.session
 
-enum class FinderKind(val label: String) { FILES("Files"), FOLDERS("Folders"), COMMANDS("Commands"), HISTORY("History") }
+enum class FinderKind(val label: String) {
+    BROWSE("Browse"), FILES("Files"), FOLDERS("Folders"), COMMANDS("Commands"), HISTORY("History"),
+}
+
+/** One entry of a remote folder, from SFTP. [isDir] follows symlinks. */
+data class RemoteEntry(
+    val name: String,
+    val path: String,
+    val isDir: Boolean,
+    val isLink: Boolean,
+    val size: Long,
+    val modified: Long,
+)
+
+data class RemoteDir(val path: String, val home: String, val entries: List<RemoteEntry>) {
+    /** [path] with the home folder shown as ~. */
+    val display: String get() = tilde(path, home)
+
+    companion object {
+        fun tilde(path: String, home: String): String = when {
+            path == home -> "~"
+            home.length > 1 && path.startsWith("$home/") -> "~/" + path.removePrefix("$home/")
+            else -> path
+        }
+    }
+}
 
 /** Shell scripts that list candidates on the server, run through a separate exec channel. */
 object RemoteLists {
@@ -33,7 +58,7 @@ object RemoteLists {
                 if command -v bash >/dev/null 2>&1; then bash -c 'compgen -c'
                 else IFS=:; for d in ${'$'}PATH; do ls -1 "${'$'}d" 2>/dev/null; done; fi | sort -u | head -n $LIMIT
                 """.trimIndent()
-            FinderKind.HISTORY -> return null
+            FinderKind.HISTORY, FinderKind.BROWSE -> return null
         }
         return "sh -c " + shellQuote(script)
     }

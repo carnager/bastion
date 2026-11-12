@@ -264,11 +264,16 @@ fun TerminalScreen(
             session = session,
             history = history,
             onDismiss = { finding = false },
+            onRun = { command ->
+                finding = false
+                editing = null
+                session.replaceLine(command, run = true)
+            },
             onPick = { text, kind ->
                 finding = false
                 val edit = editing
                 // Folders get no trailing space, so the path can be continued.
-                val tail = if (kind == FinderKind.FOLDERS) "" else " "
+                val tail = if (kind == FinderKind.FOLDERS || (kind == FinderKind.BROWSE && text.endsWith("/"))) "" else " "
                 when {
                     edit != null -> {
                         val before = edit.text.substring(0, edit.selection.start)
