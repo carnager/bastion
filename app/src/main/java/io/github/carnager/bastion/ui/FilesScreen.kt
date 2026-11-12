@@ -21,6 +21,7 @@ fun FilesScreen(
     onRun: (String) -> Unit,
     onOpenFile: (String) -> Unit,
     onBack: () -> Unit,
+    startPath: String? = null,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     Column(Modifier.fillMaxSize().imePadding()) {
@@ -33,6 +34,7 @@ fun FilesScreen(
             onInsert = onInsert,
             onRun = onRun,
             onOpenFile = onOpenFile,
+            startPath = startPath,
         )
     }
 }

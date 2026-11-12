@@ -34,6 +34,7 @@ fun SessionSheet(
     session: TerminalSession,
     status: SessionStatus,
     onDismiss: () -> Unit,
+    onOverview: () -> Unit,
     onCommands: () -> Unit,
     onFiles: () -> Unit,
     onSearch: () -> Unit,
@@ -67,17 +68,17 @@ fun SessionSheet(
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Tile("Overview", Ico.server, enabled = connected, onClick = onOverview)
             Tile("Commands", Ico.term, enabled = connected, onClick = onCommands)
             Tile("Files", Ico.folder, enabled = connected, onClick = onFiles)
             Tile("Search", Ico.search, enabled = connected, onClick = onSearch)
-            Tile("Type", Ico.keyboard, enabled = connected, onClick = onType)
         }
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Tile("Type", Ico.keyboard, enabled = connected, onClick = onType)
             Tile("Paste", Ico.paste, enabled = connected, onClick = onPaste)
             Tile("Text size", Ico.textSize, onClick = onTextSize)
             Tile("Colors", Ico.palette, onClick = onColors)
-            Spacer(Modifier.weight(1f))
         }
         Spacer(Modifier.height(14.dp))
         SheetRow("Reconnect", Ico.refresh, onClick = onReconnect)

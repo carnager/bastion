@@ -58,10 +58,12 @@ internal fun ColumnScope.BrowsePane(
     onInsert: (String) -> Unit,
     onRun: (String) -> Unit,
     onOpenFile: (String) -> Unit,
+    /** Folder to start in instead of the shell's. */
+    startPath: String? = null,
 ) {
     val context = LocalContext.current
     val cwd = remember { session.guessCwd() }
-    var path by rememberSaveable { mutableStateOf(cwd) }
+    var path by rememberSaveable { mutableStateOf(startPath ?: cwd) }
     var dir by remember { mutableStateOf<RemoteDir?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var showHidden by rememberSaveable { mutableStateOf(false) }

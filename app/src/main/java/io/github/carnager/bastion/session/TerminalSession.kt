@@ -109,6 +109,10 @@ class TerminalSession(
         return if (type == FieldType.UNIT) Services.sortUnits(choices) else choices
     }
 
+    suspend fun overview(): Overview = Overviews.parse(exec("sh -c " + shellQuote(Overviews.SCRIPT)))
+
+    suspend fun updates(): Overviews.Updates? = Overviews.parseUpdates(exec("sh -c " + shellQuote(Overviews.UPDATES_SCRIPT)))
+
     suspend fun serviceInfo(unit: String): ServiceInfo = Services.parseShow(unit, exec(Services.showCommand(unit)))
 
     /** Recent journal entries of [unit], plus a notice if journalctl said something else (e.g. no permission). */

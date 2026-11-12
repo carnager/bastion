@@ -40,7 +40,8 @@ sealed interface Screen {
     data object Settings : Screen
     data class FileView(val sessionId: Long, val path: String) : Screen
     data class Commands(val sessionId: Long) : Screen
-    data class Files(val sessionId: Long) : Screen
+    data class Files(val sessionId: Long, val path: String? = null) : Screen
+    data class Overview(val sessionId: Long) : Screen
     data class Service(val sessionId: Long, val unit: String) : Screen
 
     /** Screens that slide up like a sheet rather than in from the side. */
@@ -140,6 +141,7 @@ private fun Root(app: App) {
                             onSaveSnippet = { snippet -> saveSnippet(app, snippet) },
                             onOpenCommands = { push(Screen.Commands(session.id)) },
                             onOpenFiles = { push(Screen.Files(session.id)) },
+                            onOpenOverview = { push(Screen.Overview(session.id)) },
                             onSetHostScheme = { id ->
                                 app.store.update { v ->
                                     v.copy(hosts = v.hosts.map { if (it.id == session.host.id) it.copy(colorScheme = id) else it })
@@ -213,6 +215,19 @@ private fun Root(app: App) {
                                 onInsert = { path -> session.insertAtCursor(path, trailingSpace = !path.endsWith("/")); pop() },
                                 onRun = { command -> session.replaceLine(command, run = true); pop() },
                                 onOpenFile = { path -> push(Screen.FileView(session.id, path)) },
+                                onBack = ::pop,
+                                startPath = screen.path,
+                            )
+                        }
+                        is Screen.Overview -> WithSession(sessions, screen.sessionId, ::pop) { session ->
+                            OverviewScreen(
+                                session = session,
+                                onOpenService = { unit -> push(Screen.Service(session.id, unit)) },
+                                onOpenFolder = { path -> push(Screen.Files(session.id, path)) },
+                                onRunInTerminal = { command ->
+                                    session.replaceLine(command, run = true)
+                                    stack = stack.dropLastWhile { it !is Screen.Terminal }
+                                },
                                 onBack = ::pop,
                             )
                         }

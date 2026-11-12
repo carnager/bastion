@@ -125,6 +125,7 @@ fun TerminalScreen(
     onSaveSnippet: (Snippet) -> Unit,
     onOpenCommands: () -> Unit,
     onOpenFiles: () -> Unit,
+    onOpenOverview: () -> Unit,
 ) {
     val status by session.status.collectAsState()
     val scheme by session.scheme.collectAsState()
@@ -345,6 +346,7 @@ fun TerminalScreen(
             session = session,
             status = status,
             onDismiss = { menuOpen = false },
+            onOverview = { menuOpen = false; onOpenOverview() },
             onCommands = { menuOpen = false; onOpenCommands() },
             onFiles = { menuOpen = false; onOpenFiles() },
             onSearch = { menuOpen = false; finding = true },
