@@ -133,6 +133,11 @@ private fun Root(app: App) {
                             onFontSize = app.settings::setFontSize,
                             history = vault.history[session.host.id].orEmpty(),
                             suggestionsEnabled = suggestionsEnabled,
+                            snippets = vault.snippetsFor(session.host.id),
+                            onSaveSnippet = { snippet ->
+                                app.store.update { v -> v.copy(snippets = v.snippets.filterNot { it.id == snippet.id } + snippet) }
+                            },
+                            onDeleteSnippet = { id -> app.store.update { v -> v.copy(snippets = v.snippets.filterNot { it.id == id }) } },
                             onSetHostScheme = { id ->
                                 app.store.update { v ->
                                     v.copy(hosts = v.hosts.map { if (it.id == session.host.id) it.copy(colorScheme = id) else it })

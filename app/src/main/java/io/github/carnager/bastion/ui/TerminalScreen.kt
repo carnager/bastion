@@ -12,6 +12,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import io.github.carnager.bastion.session.FinderKind
+import io.github.carnager.bastion.data.Snippet
 import io.github.carnager.bastion.session.CommandLine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -120,6 +121,9 @@ fun TerminalScreen(
     onFontSize: (Float) -> Unit,
     history: List<String>,
     suggestionsEnabled: Boolean,
+    snippets: List<Snippet>,
+    onSaveSnippet: (Snippet) -> Unit,
+    onDeleteSnippet: (String) -> Unit,
 ) {
     val status by session.status.collectAsState()
     val scheme by session.scheme.collectAsState()
@@ -284,6 +288,15 @@ fun TerminalScreen(
                 editing = null
                 session.replaceLine(command, run = true)
             },
+            onEdit = { text ->
+                finding = false
+                editing = TextFieldValue(text, TextRange(text.length))
+            },
+            hostId = session.host.id,
+            hostLabel = session.host.label,
+            snippets = snippets,
+            onSaveSnippet = onSaveSnippet,
+            onDeleteSnippet = onDeleteSnippet,
             onPick = { text, kind ->
                 finding = false
                 val edit = editing

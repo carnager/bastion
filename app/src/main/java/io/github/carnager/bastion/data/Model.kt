@@ -37,6 +37,16 @@ data class SshKey(
     val publicKey: String = "",
 )
 
+/** A saved command template; fields like {unit} or {name:Label} are filled when it runs. */
+@Serializable
+data class Snippet(
+    val id: String,
+    val title: String,
+    val template: String,
+    /** Only for this host; null shows it everywhere. */
+    val hostId: String? = null,
+)
+
 @Serializable
 data class KnownHost(
     /** "host:port" as the user saved it, not the address it was reached through. */
@@ -52,7 +62,10 @@ data class Vault(
     val knownHosts: List<KnownHost> = emptyList(),
     /** Commands run per host id, newest first. Encrypted with the rest of the vault. */
     val history: Map<String, List<String>> = emptyMap(),
+    val snippets: List<Snippet> = emptyList(),
 ) {
+    fun snippetsFor(hostId: String): List<Snippet> = snippets.filter { it.hostId == null || it.hostId == hostId }
+
     fun host(id: String?): Host? = id?.let { wanted -> hosts.firstOrNull { it.id == wanted } }
     fun key(id: String?): SshKey? = id?.let { wanted -> keys.firstOrNull { it.id == wanted } }
 }

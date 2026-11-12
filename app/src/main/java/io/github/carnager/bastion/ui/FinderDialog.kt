@@ -52,7 +52,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import io.github.carnager.bastion.data.Snippet
 import io.github.carnager.bastion.session.FinderKind
+import androidx.compose.foundation.combinedClickable
 import io.github.carnager.bastion.session.Fuzzy
 import io.github.carnager.bastion.session.RemoteLists
 import io.github.carnager.bastion.session.TerminalSession
@@ -73,6 +75,13 @@ fun FinderDialog(
     onPick: (text: String, kind: FinderKind) -> Unit,
     /** Run a command in the shell (cd, open in editor), replacing what's typed. */
     onRun: (String) -> Unit,
+    /** Open the input field with this text. */
+    onEdit: (String) -> Unit,
+    hostId: String,
+    hostLabel: String,
+    snippets: List<Snippet>,
+    onSaveSnippet: (Snippet) -> Unit,
+    onDeleteSnippet: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val cwd = remember { session.guessCwd() }
@@ -93,7 +102,7 @@ fun FinderDialog(
     val searchQuery = if (pathMode) query.substringAfterLast('/', "") else query
 
     LaunchedEffect(kind, searchBase, refreshTick) {
-        if (kind == FinderKind.BROWSE) return@LaunchedEffect // BrowsePane lists over SFTP itself
+        if (kind == FinderKind.BROWSE || kind == FinderKind.ACTIONS) return@LaunchedEffect // those panes load their own lists
         if (pathMode) delay(250) // don't list every folder on the way while typing a path
         items = null
         error = null
@@ -115,7 +124,8 @@ fun FinderDialog(
         results = withContext(Dispatchers.Default) { Fuzzy.filter(searchQuery, all) }
     }
     // Browsing is mostly tapping, so only searching tabs open the keyboard right away.
-    LaunchedEffect(kind) { if (kind != FinderKind.BROWSE) runCatching { focus.requestFocus() } }
+    LaunchedEffect(kind) { if (kind != FinderKind.BROWSE && kind != FinderKind.ACTIONS) runCatching { focus.requestFocus() } }
+    var savingSnippet by remember { mutableStateOf<String?>(null) }
 
     fun pick(match: Fuzzy.Match) {
         val text = when (kind) {
@@ -144,6 +154,7 @@ fun FinderDialog(
                         if (query.isEmpty()) {
                         Text(
                             if (kind == FinderKind.BROWSE) "Filter this folder, or type a /path"
+                            else if (kind == FinderKind.ACTIONS) "Search commands and snippets"
                             else if (kind == FinderKind.FILES || kind == FinderKind.FOLDERS) "Fuzzy search, or type a /path"
                             else "Fuzzy search ${kind.label.lowercase()}",
                             color = extra.muted, fontSize = 15.sp,
@@ -165,7 +176,21 @@ fun FinderDialog(
                 ) {
                     FinderKind.entries.forEach { k -> SelectChip(k.label, kind == k) { kind = k } }
                 }
-                if (kind == FinderKind.BROWSE) {
+                if (kind == FinderKind.ACTIONS) {
+                    CommandsPane(
+                        session = session,
+                        hostId = hostId,
+                        hostLabel = hostLabel,
+                        snippets = snippets,
+                        query = query,
+                        onQueryChange = { query = it },
+                        onSaveSnippet = onSaveSnippet,
+                        onDeleteSnippet = onDeleteSnippet,
+                        onRun = onRun,
+                        onInsert = { text -> onPick(text, FinderKind.HISTORY) },
+                        onEdit = onEdit,
+                    )
+                } else if (kind == FinderKind.BROWSE) {
                     BrowsePane(
                         session = session,
                         query = query,
@@ -210,7 +235,7 @@ fun FinderDialog(
                 )
                 LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(start = 8.dp, end = 8.dp, bottom = 12.dp)) {
                     itemsIndexed(results, key = { index, m -> "$index:${m.text}" }) { _, match ->
-                        ResultRow(match, kind) { pick(match) }
+                        ResultRow(match, kind, onLongClick = if (kind == FinderKind.HISTORY) ({ savingSnippet = match.text }) else null) { pick(match) }
                     }
                 }
                 }
@@ -218,6 +243,13 @@ fun FinderDialog(
         }
     }
 
+    savingSnippet?.let { command ->
+        SnippetEditor(
+            Snippet(java.util.UUID.randomUUID().toString(), "", command, hostId), hostId, hostLabel,
+            onSave = { onSaveSnippet(it); savingSnippet = null; Snack.show("Snippet saved") },
+            onDismiss = { savingSnippet = null },
+        )
+    }
     if (changingBase) {
         var path by remember { mutableStateOf(base) }
         AlertDialog(
@@ -238,9 +270,11 @@ fun FinderDialog(
 }
 
 @Composable
-private fun ResultRow(match: Fuzzy.Match, kind: FinderKind, onClick: () -> Unit) {
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+private fun ResultRow(match: Fuzzy.Match, kind: FinderKind, onLongClick: (() -> Unit)?, onClick: () -> Unit) {
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick)
+        Modifier.fillMaxWidth().heightIn(min = 44.dp).clip(RoundedCornerShape(10.dp))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = if (onLongClick != null) "Save as snippet" else null)
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -251,6 +285,7 @@ private fun ResultRow(match: Fuzzy.Match, kind: FinderKind, onClick: () -> Unit)
                 FinderKind.COMMANDS -> Ico.term
                 FinderKind.HISTORY -> Ico.history
                 FinderKind.BROWSE -> Ico.folder
+                FinderKind.ACTIONS -> Ico.term
             },
             null, Modifier.size(18.dp), tint = extra.muted,
         )

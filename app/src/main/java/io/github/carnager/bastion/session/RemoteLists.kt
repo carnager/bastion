@@ -1,7 +1,7 @@
 package io.github.carnager.bastion.session
 
 enum class FinderKind(val label: String) {
-    BROWSE("Browse"), FILES("Files"), FOLDERS("Folders"), COMMANDS("Commands"), HISTORY("History"),
+    BROWSE("Browse"), ACTIONS("Commands"), FILES("Files"), FOLDERS("Folders"), COMMANDS("Programs"), HISTORY("History"),
 }
 
 /** One entry of a remote folder, from SFTP. [isDir] follows symlinks. */
@@ -58,7 +58,7 @@ object RemoteLists {
                 if command -v bash >/dev/null 2>&1; then bash -c 'compgen -c'
                 else IFS=:; for d in ${'$'}PATH; do ls -1 "${'$'}d" 2>/dev/null; done; fi | sort -u | head -n $LIMIT
                 """.trimIndent()
-            FinderKind.HISTORY, FinderKind.BROWSE -> return null
+            FinderKind.HISTORY, FinderKind.BROWSE, FinderKind.ACTIONS -> return null
         }
         return "sh -c " + shellQuote(script)
     }

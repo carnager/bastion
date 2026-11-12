@@ -92,6 +92,22 @@ class TerminalSession(
         return items
     }
 
+    @Volatile private var tools: Set<String>? = null
+
+    /** Which of [Catalog.PROBED] exist on the server; probed once per connection, null if that failed. */
+    suspend fun tools(): Set<String>? {
+        tools?.let { return it }
+        return runCatching { exec(Catalog.probeCommand()).lines().map { it.trim() }.filter { it.isNotEmpty() }.toSet() }
+            .getOrNull()?.also { tools = it }
+    }
+
+    /** Values the server offers for a picked field (services, containers, processes). */
+    suspend fun choices(type: FieldType): List<Catalog.Choice> {
+        val engine = if (tools()?.let { "docker" !in it && "podman" in it } == true) "podman" else "docker"
+        val command = Catalog.sourceCommand(type, engine) ?: return emptyList()
+        return Catalog.parseChoices(type, exec("sh -c " + shellQuote(command)))
+    }
+
     @Volatile private var sftp: SftpClient? = null
 
     private fun sftpClient(): SftpClient {
@@ -244,6 +260,7 @@ class TerminalSession(
     private fun finish(error: String?) {
         if (_status.value is SessionStatus.Ended) return
         shell = null
+        tools = null
         runCatching { sftp?.close() }
         sftp = null
         connection?.close()
