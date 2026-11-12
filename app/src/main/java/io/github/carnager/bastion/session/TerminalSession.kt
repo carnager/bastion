@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.apache.sshd.client.channel.ChannelShell
 import org.connectbot.terminal.TerminalEmulator
 import org.connectbot.terminal.TerminalEmulatorFactory
@@ -61,6 +62,54 @@ class TerminalSession(
 
     val screen: ScreenReader = ScreenReader(emulator)
 
+    /** The shell's directory as reported by OSC 7, if the shell does that. */
+    val osc7 = Osc7Sniffer()
+
+    /** The prompt line and the one above it, from the last capture (prompts often show the directory). */
+    @Volatile private var promptLines: List<String> = emptyList()
+
+    /** Best guess at the shell's working directory: OSC 7, else a path in the prompt, else home. */
+    fun guessCwd(): String = osc7.cwd ?: Osc7Sniffer.fromPrompt(promptLines) ?: "~"
+
+    /** True when the directory comes from the shell itself rather than a guess. */
+    val cwdIsReported: Boolean get() = osc7.cwd != null
+
+    private val listCache = HashMap<Pair<FinderKind, String>, Pair<Long, List<String>>>()
+
+    /** Candidates for the finder, listed on the server; cached briefly per kind and directory. */
+    suspend fun list(kind: FinderKind, base: String, refresh: Boolean = false): List<String> {
+        val key = kind to base
+        synchronized(listCache) {
+            listCache[key]?.let { (time, items) ->
+                if (!refresh && System.currentTimeMillis() - time < LIST_CACHE_MS) return items
+            }
+        }
+        val command = RemoteLists.command(kind, base) ?: return emptyList()
+        val items = RemoteLists.parse(exec(command), kind)
+        synchronized(listCache) { listCache[key] = System.currentTimeMillis() to items }
+        return items
+    }
+
+    /** Runs [command] on a separate exec channel of the same SSH connection; nothing reaches the shell. */
+    suspend fun exec(command: String, maxBytes: Int = 8 * 1024 * 1024): String = withContext(Dispatchers.IO) {
+        val conn = connection ?: throw IllegalStateException("Not connected")
+        val channel = conn.session.createExecChannel(command)
+        try {
+            channel.open().verify(OPEN_TIMEOUT)
+            val out = java.io.ByteArrayOutputStream()
+            val input = channel.invertedOut
+            val buffer = ByteArray(64 * 1024)
+            while (out.size() < maxBytes) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                out.write(buffer, 0, read)
+            }
+            out.toString(Charsets.UTF_8.name())
+        } finally {
+            channel.close(false)
+        }
+    }
+
     /** The prompt as captured at the first keystroke after the last Enter. */
     @Volatile var prompt: CommandLine.Prompt? = null
         private set
@@ -70,7 +119,10 @@ class TerminalSession(
         if (shell == null) return
         val view = screen.read() ?: return
         if (!typedSinceEnter) {
-            CommandLine.capturePrompt(view)?.let { prompt = it }
+            CommandLine.capturePrompt(view)?.let {
+                prompt = it
+                promptLines = listOf(view.lines.getOrElse(view.cursorRow - 1) { "" }, it.text)
+            }
             typedSinceEnter = true
         }
         if (bytes.contains(CR)) {
@@ -126,7 +178,10 @@ class TerminalSession(
                 while (isActive) {
                     val read = input.read(buffer)
                     if (read < 0) break
-                    if (read > 0) emulator.writeInput(buffer, 0, read)
+                    if (read > 0) {
+                        osc7.feed(buffer, read)
+                        emulator.writeInput(buffer, 0, read)
+                    }
                 }
                 Log.i(TAG, "Session $id to ${host.label}: remote closed the shell")
                 finish(null)
@@ -184,6 +239,7 @@ class TerminalSession(
 
     private companion object {
         const val CR: Byte = 0x0d
+        const val LIST_CACHE_MS = 30_000L
         val OPEN_TIMEOUT: Duration = Duration.ofSeconds(20)
     }
 }

@@ -62,14 +62,14 @@ import kotlin.math.roundToInt
  */
 @Composable
 internal fun CommandEditor(
-    initial: String,
+    value: TextFieldValue,
+    onValueChange: (TextFieldValue) -> Unit,
     history: List<String>,
     onRun: (String) -> Unit,
     onInsert: (String) -> Unit,
     onClose: () -> Unit,
 ) {
     val chrome = LocalChrome.current
-    var value by remember { mutableStateOf(TextFieldValue(initial, TextRange(initial.length))) }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
     val suggestions = remember(value.text, history) {
@@ -79,7 +79,7 @@ internal fun CommandEditor(
     Column(Modifier.fillMaxWidth().background(chrome.bar)) {
         if (suggestions.isNotEmpty()) {
             SuggestionChips(suggestions) { picked ->
-                value = TextFieldValue(picked, TextRange(picked.length))
+                onValueChange(TextFieldValue(picked, TextRange(picked.length)))
             }
         }
         Row(
@@ -98,7 +98,7 @@ internal fun CommandEditor(
                 BasicTextField(
                     value = value,
                     // Enter runs; a pasted newline shouldn't sneak a second command in.
-                    onValueChange = { value = it.copy(text = it.text.replace('\n', ' ')) },
+                    onValueChange = { onValueChange(it.copy(text = it.text.replace('\n', ' '))) },
                     modifier = Modifier.fillMaxWidth().focusRequester(focus),
                     textStyle = MonoStyle.copy(color = chrome.fg, fontSize = 14.sp),
                     cursorBrush = SolidColor(chrome.accent),

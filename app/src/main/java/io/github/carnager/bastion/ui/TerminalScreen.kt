@@ -4,6 +4,9 @@ import android.app.Activity
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
+import io.github.carnager.bastion.session.FinderKind
 import io.github.carnager.bastion.session.CommandLine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -121,10 +124,14 @@ fun TerminalScreen(
     val scope = rememberCoroutineScope()
     var picking by remember { mutableStateOf(false) }
     var sizing by remember { mutableStateOf(false) }
-    /** Non-null while the input field is open: the text it started with. */
-    var editing by remember(session.id) { mutableStateOf<String?>(null) }
+    /** Non-null while the input field is open. */
+    var editing by remember(session.id) { mutableStateOf<TextFieldValue?>(null) }
+    var finding by remember { mutableStateOf(false) }
     val termFocus = remember { FocusRequester() }
-    val openEditor = { editing = session.currentCommand().orEmpty() }
+    val openEditor = {
+        val text = session.currentCommand().orEmpty()
+        editing = TextFieldValue(text, TextRange(text.length))
+    }
     val closeEditor: () -> Unit = {
         editing = null
         runCatching { termFocus.requestFocus() }
@@ -234,7 +241,8 @@ fun TerminalScreen(
         val edit = editing
         if (edit != null) {
             CommandEditor(
-                initial = edit,
+                value = edit,
+                onValueChange = { editing = it },
                 history = if (suggestionsEnabled) history else emptyList(),
                 onRun = { text -> session.replaceLine(text, run = true); closeEditor() },
                 onInsert = { text -> session.replaceLine(text, run = false); closeEditor() },
@@ -247,10 +255,39 @@ fun TerminalScreen(
                 else session.replaceLine(picked, run = false)
             }
         }
-        ExtraKeys(session, modifiers, onEdit = openEditor)
+        ExtraKeys(session, modifiers, onEdit = openEditor, onFind = { finding = true })
     }
     }
 
+    if (finding) {
+        FinderDialog(
+            session = session,
+            history = history,
+            onDismiss = { finding = false },
+            onPick = { text, kind ->
+                finding = false
+                val edit = editing
+                // Folders get no trailing space, so the path can be continued.
+                val tail = if (kind == FinderKind.FOLDERS) "" else " "
+                when {
+                    edit != null -> {
+                        val before = edit.text.substring(0, edit.selection.start)
+                        val lead = if (before.isNotEmpty() && !before.endsWith(" ")) " " else ""
+                        val insert = if (kind == FinderKind.HISTORY) text else lead + text + tail
+                        val newText = if (kind == FinderKind.HISTORY) text else before + insert + edit.text.substring(edit.selection.end)
+                        val cursor = if (kind == FinderKind.HISTORY) text.length else before.length + insert.length
+                        editing = TextFieldValue(newText, TextRange(cursor))
+                    }
+                    kind == FinderKind.HISTORY -> session.replaceLine(text, run = false)
+                    else -> {
+                        val current = session.currentCommand().orEmpty()
+                        val lead = if (current.isNotEmpty() && !current.endsWith(" ")) " " else ""
+                        session.send((lead + text + tail).encodeToByteArray())
+                    }
+                }
+            },
+        )
+    }
     if (sizing) {
         TextSizeSheet(fontSize, onFontSize, onDismiss = { sizing = false })
     }
@@ -385,7 +422,7 @@ private val KEYS = listOf(
 )
 
 @Composable
-private fun ExtraKeys(session: TerminalSession, modifiers: StickyModifiers, onEdit: () -> Unit) {
+private fun ExtraKeys(session: TerminalSession, modifiers: StickyModifiers, onEdit: () -> Unit, onFind: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().height(Dimens.keyHeight).background(BarColor),
         verticalAlignment = Alignment.CenterVertically,
@@ -394,6 +431,10 @@ private fun ExtraKeys(session: TerminalSession, modifiers: StickyModifiers, onEd
             Modifier.fillMaxHeight().width(44.dp).padding(2.dp).clip(RoundedCornerShape(5.dp)).clickable(onClick = onEdit),
             contentAlignment = Alignment.Center,
         ) { Icon(Ico.keyboard, "Edit line in input field", Modifier.size(20.dp), tint = Accent) }
+        Box(
+            Modifier.fillMaxHeight().width(44.dp).padding(2.dp).clip(RoundedCornerShape(5.dp)).clickable(onClick = onFind),
+            contentAlignment = Alignment.Center,
+        ) { Icon(Ico.search, "Find files, folders, commands", Modifier.size(20.dp), tint = Accent) }
         // Modifiers stay put; the rest scrolls, so Ctrl is always under the thumb.
         ModifierKey("Ctrl", modifiers.ctrl) { modifiers.ctrl = modifiers.cycle(modifiers.ctrl) }
         ModifierKey("Alt", modifiers.alt) { modifiers.alt = modifiers.cycle(modifiers.alt) }
