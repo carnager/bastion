@@ -1,5 +1,6 @@
 package io.github.carnager.bastion.session
 
+import android.util.Log
 import io.github.carnager.bastion.data.Host
 import io.github.carnager.bastion.data.VaultRepository
 import io.github.carnager.bastion.ssh.Connector
@@ -30,7 +31,10 @@ class SessionManager(private val store: VaultRepository, private val connector: 
 
     fun close(id: Long) {
         val session = get(id) ?: return
+        Log.i(TAG, "Closing session $id to ${session.host.label}", Throwable("close() called from"))
         _sessions.update { list -> list.filterNot { it.id == id } }
         session.close()
     }
 }
+
+const val TAG = "Bastion"

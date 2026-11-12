@@ -43,6 +43,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -99,6 +103,15 @@ fun TerminalScreen(
                 foregroundColor = Color(0xFFE6E6E6),
                 keyboardEnabled = true,
                 modifierManager = modifiers,
+                // termlib would otherwise turn Back into terminal input, which ends the shell.
+                onInterceptKey = { event ->
+                    if (event.key == Key.Back) {
+                        if (event.type == KeyEventType.KeyUp) onBack()
+                        true
+                    } else {
+                        false
+                    }
+                },
             )
         }
         if (status is SessionStatus.Ended) {

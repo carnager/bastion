@@ -1,5 +1,6 @@
 package io.github.carnager.bastion.session
 
+import android.util.Log
 import androidx.compose.ui.graphics.Color
 import io.github.carnager.bastion.data.Host
 import io.github.carnager.bastion.ssh.Connector
@@ -34,7 +35,13 @@ class TerminalSession(
     private val _status = MutableStateFlow<SessionStatus>(SessionStatus.Connecting)
     val status: StateFlow<SessionStatus> = _status.asStateFlow()
 
-    private val outgoing = Channel<ByteArray>(Channel.UNLIMITED)
+    /** Everything bound for the server, written by one I/O coroutine: MINA must never be called on the main thread. */
+    private sealed interface Outgoing {
+        class Bytes(val data: ByteArray) : Outgoing
+        data class Resize(val columns: Int, val rows: Int) : Outgoing
+    }
+
+    private val outgoing = Channel<Outgoing>(Channel.UNLIMITED)
     @Volatile private var connection: SshConnection? = null
     @Volatile private var shell: ChannelShell? = null
     private var job: Job? = null
@@ -42,8 +49,8 @@ class TerminalSession(
     val emulator: TerminalEmulator = TerminalEmulatorFactory.create(
         defaultForeground = Color(0xFFE6E6E6),
         defaultBackground = Color(0xFF101010),
-        onKeyboardInput = { bytes -> if (shell != null) outgoing.trySend(bytes) },
-        onResize = { size -> shell?.let { runCatching { it.sendWindowChange(size.columns, size.rows) } } },
+        onKeyboardInput = { bytes -> send(bytes) },
+        onResize = { size -> if (shell != null) outgoing.trySend(Outgoing.Resize(size.columns, size.rows)) },
         autoDetectUrls = true,
     )
 
@@ -63,6 +70,8 @@ class TerminalSession(
                 }
                 channel.open().verify(OPEN_TIMEOUT)
                 shell = channel
+                // The view may have resized while the channel was opening.
+                emulator.dimensions.let { outgoing.trySend(Outgoing.Resize(it.columns, it.rows)) }
                 _status.value = SessionStatus.Connected
                 launch { pumpOutgoing(channel) }
                 val input = channel.invertedOut
@@ -72,8 +81,10 @@ class TerminalSession(
                     if (read < 0) break
                     if (read > 0) emulator.writeInput(buffer, 0, read)
                 }
+                Log.i(TAG, "Session $id to ${host.label}: remote closed the shell")
                 finish(null)
             } catch (e: Exception) {
+                Log.w(TAG, "Session $id to ${host.label} failed", e)
                 finish(e.message ?: e.javaClass.simpleName)
             }
         }
@@ -81,15 +92,20 @@ class TerminalSession(
 
     private suspend fun pumpOutgoing(channel: ChannelShell) {
         val out = channel.invertedIn
-        for (bytes in outgoing) {
-            out.write(bytes)
-            out.flush()
+        for (item in outgoing) {
+            when (item) {
+                is Outgoing.Bytes -> {
+                    out.write(item.data)
+                    out.flush()
+                }
+                is Outgoing.Resize -> channel.sendWindowChange(item.columns, item.rows)
+            }
         }
     }
 
     /** Text from the extra-keys row, snippets or the clipboard, sent as if typed. */
     fun send(bytes: ByteArray) {
-        if (shell != null) outgoing.trySend(bytes)
+        if (shell != null) outgoing.trySend(Outgoing.Bytes(bytes))
     }
 
     private fun finish(error: String?) {
