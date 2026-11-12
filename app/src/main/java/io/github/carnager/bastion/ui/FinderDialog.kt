@@ -68,27 +68,22 @@ import kotlinx.coroutines.withContext
  * Fuzzy finder for files, folders, commands and history. Lists come from the server over a
  * separate exec channel; matching runs on the phone. [onPick] gets text ready to insert.
  */
+/** Search covers searching only; Commands and Files have their own screens. */
+private val SEARCH_KINDS = listOf(FinderKind.FILES, FinderKind.FOLDERS, FinderKind.COMMANDS, FinderKind.HISTORY)
+
 @Composable
 fun FinderDialog(
     session: TerminalSession,
     history: List<String>,
     onPick: (text: String, kind: FinderKind) -> Unit,
-    /** Run a command in the shell (cd, open in editor), replacing what's typed. */
-    onRun: (String) -> Unit,
-    /** Open the input field with this text. */
-    onEdit: (String) -> Unit,
-    /** Open a remote file (absolute path) in the native viewer. */
-    onOpenFile: (String) -> Unit,
     hostId: String,
     hostLabel: String,
-    snippets: List<Snippet>,
     onSaveSnippet: (Snippet) -> Unit,
-    onDeleteSnippet: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val cwd = remember { session.guessCwd() }
     var base by rememberSaveable { mutableStateOf(cwd) }
-    var kind by rememberSaveable { mutableStateOf(FinderKind.BROWSE) }
+    var kind by rememberSaveable { mutableStateOf(FinderKind.FILES) }
     var query by rememberSaveable { mutableStateOf("") }
     var refreshTick by remember { mutableIntStateOf(0) }
     var items by remember { mutableStateOf<List<String>?>(null) }
@@ -176,32 +171,9 @@ fun FinderDialog(
                     Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 10.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    FinderKind.entries.forEach { k -> SelectChip(k.label, kind == k) { kind = k } }
+                    SEARCH_KINDS.forEach { k -> SelectChip(k.label, kind == k) { kind = k } }
                 }
-                if (kind == FinderKind.ACTIONS) {
-                    CommandsPane(
-                        session = session,
-                        hostId = hostId,
-                        hostLabel = hostLabel,
-                        snippets = snippets,
-                        query = query,
-                        onQueryChange = { query = it },
-                        onSaveSnippet = onSaveSnippet,
-                        onDeleteSnippet = onDeleteSnippet,
-                        onRun = onRun,
-                        onInsert = { text -> onPick(text, FinderKind.HISTORY) },
-                        onEdit = onEdit,
-                    )
-                } else if (kind == FinderKind.BROWSE) {
-                    BrowsePane(
-                        session = session,
-                        query = query,
-                        onQueryChange = { query = it },
-                        onInsert = { text -> onPick(text, FinderKind.BROWSE) },
-                        onRun = onRun,
-                        onOpenFile = onOpenFile,
-                    )
-                } else {
+                run {
                 // Where we're searching
                 if (kind == FinderKind.FILES || kind == FinderKind.FOLDERS) {
                     Row(

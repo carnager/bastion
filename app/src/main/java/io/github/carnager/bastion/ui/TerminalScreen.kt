@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalView
@@ -121,10 +122,9 @@ fun TerminalScreen(
     onFontSize: (Float) -> Unit,
     history: List<String>,
     suggestionsEnabled: Boolean,
-    snippets: List<Snippet>,
     onSaveSnippet: (Snippet) -> Unit,
-    onDeleteSnippet: (String) -> Unit,
-    onOpenFile: (String) -> Unit,
+    onOpenCommands: () -> Unit,
+    onOpenFiles: () -> Unit,
 ) {
     val status by session.status.collectAsState()
     val scheme by session.scheme.collectAsState()
@@ -137,7 +137,16 @@ fun TerminalScreen(
     /** Non-null while the input field is open. */
     var editing by remember(session.id) { mutableStateOf<TextFieldValue?>(null) }
     var finding by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
     val termFocus = remember { FocusRequester() }
+    // Other screens (Commands: "Edit first") hand text over to the input field.
+    val pendingEdit by session.pendingEdit.collectAsState()
+    LaunchedEffect(pendingEdit) {
+        pendingEdit?.let { text ->
+            editing = TextFieldValue(text, TextRange(text.length))
+            session.pendingEdit.value = null
+        }
+    }
     val openEditor = {
         val text = session.currentCommand().orEmpty()
         editing = TextFieldValue(text, TextRange(text.length))
@@ -183,16 +192,7 @@ fun TerminalScreen(
             sessions = sessions,
             onSwitch = onSwitch,
             onBack = onBack,
-            onPaste = {
-                scope.launch {
-                    val text = clipboard.getClipEntry()?.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text
-                    if (!text.isNullOrEmpty()) session.emulator.pasteText(text.toString())
-                }
-            },
-            onReconnect = session::reconnect,
-            onClose = onClose,
-            onColors = { picking = true },
-            onTextSize = { sizing = true },
+            onMenu = { menuOpen = true },
         )
         // Keyed by session so switching tabs gets a fresh view bound to the other emulator.
         androidx.compose.runtime.key(session.id) {
@@ -274,7 +274,7 @@ fun TerminalScreen(
                     else session.replaceLine(picked, run = false)
                 }
             }
-            ExtraKeys(session, modifiers, onEdit = openEditor, onFind = { finding = true })
+            ExtraKeys(session, modifiers, onMenu = { menuOpen = true })
         }
     }
     }
@@ -284,29 +284,14 @@ fun TerminalScreen(
             session = session,
             history = history,
             onDismiss = { finding = false },
-            onRun = { command ->
-                finding = false
-                editing = null
-                session.replaceLine(command, run = true)
-            },
-            onEdit = { text ->
-                finding = false
-                editing = TextFieldValue(text, TextRange(text.length))
-            },
-            onOpenFile = { path ->
-                finding = false
-                onOpenFile(path)
-            },
             hostId = session.host.id,
             hostLabel = session.host.label,
-            snippets = snippets,
             onSaveSnippet = onSaveSnippet,
-            onDeleteSnippet = onDeleteSnippet,
             onPick = { text, kind ->
                 finding = false
                 val edit = editing
                 // Folders get no trailing space, so the path can be continued.
-                val tail = if (kind == FinderKind.FOLDERS || (kind == FinderKind.BROWSE && text.endsWith("/"))) "" else " "
+                val tail = if (kind == FinderKind.FOLDERS) "" else " "
                 when {
                     edit != null -> {
                         val before = edit.text.substring(0, edit.selection.start)
@@ -324,6 +309,28 @@ fun TerminalScreen(
                     }
                 }
             },
+        )
+    }
+    if (menuOpen) {
+        SessionSheet(
+            session = session,
+            status = status,
+            onDismiss = { menuOpen = false },
+            onCommands = { menuOpen = false; onOpenCommands() },
+            onFiles = { menuOpen = false; onOpenFiles() },
+            onSearch = { menuOpen = false; finding = true },
+            onType = { menuOpen = false; openEditor() },
+            onPaste = {
+                menuOpen = false
+                scope.launch {
+                    val text = clipboard.getClipEntry()?.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text
+                    if (!text.isNullOrEmpty()) session.emulator.pasteText(text.toString())
+                }
+            },
+            onTextSize = { menuOpen = false; sizing = true },
+            onColors = { menuOpen = false; picking = true },
+            onReconnect = { menuOpen = false; session.reconnect() },
+            onDisconnect = { menuOpen = false; onClose() },
         )
     }
     if (sizing) {
@@ -353,13 +360,8 @@ private fun SessionBar(
     sessions: List<TerminalSession>,
     onSwitch: (Long) -> Unit,
     onBack: () -> Unit,
-    onPaste: () -> Unit,
-    onReconnect: () -> Unit,
-    onClose: () -> Unit,
-    onColors: () -> Unit,
-    onTextSize: () -> Unit,
+    onMenu: () -> Unit,
 ) {
-    var menu by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().height(Dimens.barHeight).background(BarColor),
         verticalAlignment = Alignment.CenterVertically,
@@ -395,17 +397,8 @@ private fun SessionBar(
                 }
             }
         }
-        Box {
-            IconButton(onClick = { menu = true }, modifier = Modifier.size(Dimens.barHeight)) {
-                Icon(Ico.more, "Menu", tint = KeyText, modifier = Modifier.size(20.dp))
-            }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text("Paste") }, onClick = { menu = false; onPaste() })
-                DropdownMenuItem(text = { Text("Text size") }, onClick = { menu = false; onTextSize() })
-                DropdownMenuItem(text = { Text("Colors") }, onClick = { menu = false; onColors() })
-                DropdownMenuItem(text = { Text("Reconnect") }, onClick = { menu = false; onReconnect() })
-                DropdownMenuItem(text = { Text("Disconnect") }, onClick = { menu = false; onClose() })
-            }
+        IconButton(onClick = onMenu, modifier = Modifier.size(Dimens.barHeight)) {
+            Icon(Ico.more, "Session menu", tint = KeyText, modifier = Modifier.size(20.dp))
         }
     }
 }
@@ -460,19 +453,17 @@ private val KEYS = listOf(
 )
 
 @Composable
-private fun ExtraKeys(session: TerminalSession, modifiers: StickyModifiers, onEdit: () -> Unit, onFind: () -> Unit) {
+private fun ExtraKeys(session: TerminalSession, modifiers: StickyModifiers, onMenu: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().height(Dimens.keyHeight).background(BarColor),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // The session menu: Commands, Files, Search, Type, Paste, Text size, Colors, …
         Box(
-            Modifier.fillMaxHeight().width(44.dp).padding(2.dp).clip(RoundedCornerShape(5.dp)).clickable(onClick = onEdit),
+            Modifier.fillMaxHeight().padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 4.dp).width(48.dp)
+                .clip(RoundedCornerShape(10.dp)).background(Accent.copy(alpha = 0.18f)).clickable(onClick = onMenu),
             contentAlignment = Alignment.Center,
-        ) { Icon(Ico.keyboard, "Edit line in input field", Modifier.size(20.dp), tint = Accent) }
-        Box(
-            Modifier.fillMaxHeight().width(44.dp).padding(2.dp).clip(RoundedCornerShape(5.dp)).clickable(onClick = onFind),
-            contentAlignment = Alignment.Center,
-        ) { Icon(Ico.search, "Find files, folders, commands", Modifier.size(20.dp), tint = Accent) }
+        ) { Icon(Ico.menu, "Session menu", Modifier.size(20.dp), tint = Accent) }
         // Modifiers stay put; the rest scrolls, so Ctrl is always under the thumb.
         ModifierKey("Ctrl", modifiers.ctrl) { modifiers.ctrl = modifiers.cycle(modifiers.ctrl) }
         ModifierKey("Alt", modifiers.alt) { modifiers.alt = modifiers.cycle(modifiers.alt) }

@@ -249,6 +249,16 @@ class TerminalSession(
         }
     }
 
+    /** Text another screen wants opened in the terminal's input field; the terminal clears it. */
+    val pendingEdit = MutableStateFlow<String?>(null)
+
+    /** Types [text] at the cursor, with a separating space if needed. */
+    fun insertAtCursor(text: String, trailingSpace: Boolean = true) {
+        val current = currentCommand().orEmpty()
+        val lead = if (current.isNotEmpty() && !current.endsWith(" ")) " " else ""
+        send((lead + text + if (trailingSpace) " " else "").encodeToByteArray())
+    }
+
     /** What's typed after the prompt right now, or null if unknown (full-screen app, no prompt yet). */
     fun currentCommand(): String? = screen.read()?.let { CommandLine.current(it, prompt) }
 

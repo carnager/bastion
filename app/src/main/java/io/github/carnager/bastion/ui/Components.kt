@@ -108,6 +108,12 @@ object Ico {
     val insert = strokeIcon("insert", "M12 3v12M7 10l5 5 5-5M5 20h14", 2f)
     val keyboard = strokeIcon("keyboard", "M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zM6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8")
     val textSize = strokeIcon("textSize", "M4 7V5h10v2M9 5v14M7 19h4M14 12v-1h7v1M17.5 11v8M16 19h3", 1.8f)
+    // Lucide-style outlines for the session menu and pickers.
+    val menu = strokeIcon("menu", "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z")
+    val box = strokeIcon("box", "M21 8 12 3 3 8v8l9 5 9-5zM3 8l9 5 9-5M12 13v8")
+    val cpu = strokeIcon("cpu", "M6 6h12v12H6zM9 9h6v6H9zM9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4")
+    val server = strokeIcon("server", "M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01")
+    val palette = strokeIcon("palette", "M12 3a9 9 0 1 0 0 18c1 0 1.5-.8 1.5-1.6 0-.4-.2-.8-.4-1.1-.3-.3-.4-.6-.4-1 0-.9.7-1.6 1.6-1.6H16a5 5 0 0 0 5-5c0-4.1-4-7.7-9-7.7zM7.5 11h.01M10 7.5h.01M14 7.5h.01M16.5 11h.01")
     val wrap = strokeIcon("wrap", "M4 6h16M4 12h13a3 3 0 0 1 0 6h-4M15 16l-2 2 2 2M4 18h5")
     val unwrap = strokeIcon("unwrap", "M4 6h16M4 12h16M4 18h16")
     val up = strokeIcon("up", "m6 15 6-6 6 6", 2f)

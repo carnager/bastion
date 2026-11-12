@@ -39,6 +39,8 @@ sealed interface Screen {
     data class Terminal(val sessionId: Long) : Screen
     data object Settings : Screen
     data class FileView(val sessionId: Long, val path: String) : Screen
+    data class Commands(val sessionId: Long) : Screen
+    data class Files(val sessionId: Long) : Screen
 
     /** Screens that slide up like a sheet rather than in from the side. */
     val isSheet: Boolean get() = this is EditHost
@@ -134,12 +136,9 @@ private fun Root(app: App) {
                             onFontSize = app.settings::setFontSize,
                             history = vault.history[session.host.id].orEmpty(),
                             suggestionsEnabled = suggestionsEnabled,
-                            snippets = vault.snippetsFor(session.host.id),
-                            onSaveSnippet = { snippet ->
-                                app.store.update { v -> v.copy(snippets = v.snippets.filterNot { it.id == snippet.id } + snippet) }
-                            },
-                            onDeleteSnippet = { id -> app.store.update { v -> v.copy(snippets = v.snippets.filterNot { it.id == id }) } },
-                            onOpenFile = { path -> push(Screen.FileView(session.id, path)) },
+                            onSaveSnippet = { snippet -> saveSnippet(app, snippet) },
+                            onOpenCommands = { push(Screen.Commands(session.id)) },
+                            onOpenFiles = { push(Screen.Files(session.id)) },
                             onSetHostScheme = { id ->
                                 app.store.update { v ->
                                     v.copy(hosts = v.hosts.map { if (it.id == session.host.id) it.copy(colorScheme = id) else it })
@@ -182,6 +181,27 @@ private fun Root(app: App) {
                         )
                         Screen.Keys -> KeysScreen(vault = vault, store = app.store, onBack = ::pop)
                         Screen.Settings -> SettingsScreen(settings = app.settings, onBack = ::pop)
+                        is Screen.Commands -> WithSession(sessions, screen.sessionId, ::pop) { session ->
+                            CommandsScreen(
+                                session = session,
+                                snippets = vault.snippetsFor(session.host.id),
+                                onSaveSnippet = { saveSnippet(app, it) },
+                                onDeleteSnippet = { id -> app.store.update { v -> v.copy(snippets = v.snippets.filterNot { it.id == id }) } },
+                                onRun = { command -> session.replaceLine(command, run = true); pop() },
+                                onInsert = { command -> session.replaceLine(command, run = false); pop() },
+                                onEdit = { command -> session.pendingEdit.value = command; pop() },
+                                onBack = ::pop,
+                            )
+                        }
+                        is Screen.Files -> WithSession(sessions, screen.sessionId, ::pop) { session ->
+                            FilesScreen(
+                                session = session,
+                                onInsert = { path -> session.insertAtCursor(path, trailingSpace = !path.endsWith("/")); pop() },
+                                onRun = { command -> session.replaceLine(command, run = true); pop() },
+                                onOpenFile = { path -> push(Screen.FileView(session.id, path)) },
+                                onBack = ::pop,
+                            )
+                        }
                         is Screen.FileView -> {
                             val session = sessions.firstOrNull { it.id == screen.sessionId }
                             if (session == null) {
@@ -207,6 +227,22 @@ private fun Root(app: App) {
     }
 
     prompt?.let { PromptDialog(it, app.prompter::answer) }
+}
+
+private fun saveSnippet(app: App, snippet: io.github.carnager.bastion.data.Snippet) {
+    app.store.update { v -> v.copy(snippets = v.snippets.filterNot { it.id == snippet.id } + snippet) }
+}
+
+/** Shows [content] for an open session; leaves the screen if the session is gone. */
+@Composable
+private fun WithSession(
+    sessions: List<io.github.carnager.bastion.session.TerminalSession>,
+    id: Long,
+    pop: () -> Unit,
+    content: @Composable (io.github.carnager.bastion.session.TerminalSession) -> Unit,
+) {
+    val session = sessions.firstOrNull { it.id == id }
+    if (session == null) LaunchedEffect(id) { pop() } else content(session)
 }
 
 private fun deleteHost(app: App, id: String) {
