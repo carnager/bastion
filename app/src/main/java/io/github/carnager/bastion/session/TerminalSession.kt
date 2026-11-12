@@ -137,6 +137,76 @@ class TerminalSession(
         RemoteDir(dir, home, entries)
     }
 
+    private fun resolve(client: SftpClient, path: String): String {
+        val home by lazy { client.canonicalPath(".") }
+        return when {
+            path == "~" -> home
+            path.startsWith("~/") -> home.trimEnd('/') + "/" + path.removePrefix("~/")
+            else -> path
+        }
+    }
+
+    /** Reads a file over SFTP for the viewer; at most [maxBytes], binary files come back without text. */
+    suspend fun readFile(path: String, maxBytes: Int = 4 * 1024 * 1024): RemoteFile = withContext(Dispatchers.IO) {
+        val client = sftpClient()
+        val full = client.canonicalPath(resolve(client, path))
+        val attrs = client.stat(full)
+        val bytes = client.read(full).use { input ->
+            val out = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(64 * 1024)
+            while (out.size() < maxBytes) {
+                val n = input.read(buffer, 0, minOf(buffer.size, maxBytes - out.size()))
+                if (n < 0) break
+                out.write(buffer, 0, n)
+            }
+            out.toByteArray()
+        }
+        val binary = bytes.take(8192).any { it == 0.toByte() }
+        RemoteFile(
+            path = full,
+            text = if (binary) null else bytes.toString(Charsets.UTF_8),
+            size = attrs.size,
+            modified = attrs.modifyTime?.toMillis() ?: 0L,
+            truncated = attrs.size > bytes.size,
+        )
+    }
+
+    /**
+     * Writes [text] back over SFTP unless the file changed since [expectedModified]. Writing
+     * into the existing file keeps its owner and permissions.
+     */
+    suspend fun writeFile(path: String, text: String, expectedModified: Long, force: Boolean = false): SaveResult =
+        withContext(Dispatchers.IO) {
+            try {
+                val client = sftpClient()
+                val current = runCatching { client.stat(path).modifyTime?.toMillis() ?: 0L }.getOrNull()
+                if (!force && current != null && expectedModified != 0L && current != expectedModified) return@withContext SaveResult.Conflict
+                client.write(path).use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                SaveResult.Saved
+            } catch (e: org.apache.sshd.sftp.common.SftpException) {
+                if (e.status == org.apache.sshd.sftp.common.SftpConstants.SSH_FX_PERMISSION_DENIED) SaveResult.PermissionDenied
+                else SaveResult.Failed(e.message ?: "SFTP error ${e.status}")
+            } catch (e: Exception) {
+                SaveResult.Failed(e.message ?: e.javaClass.simpleName)
+            }
+        }
+
+    /** Current modification time, to refresh the conflict check after saving. */
+    suspend fun modifiedTime(path: String): Long = withContext(Dispatchers.IO) {
+        runCatching { sftpClient().stat(path).modifyTime?.toMillis() ?: 0L }.getOrDefault(0L)
+    }
+
+    /** Uploads [text] to a private temp file and returns its path (for saving with sudo). */
+    suspend fun writeTemp(text: String): String = withContext(Dispatchers.IO) {
+        val client = sftpClient()
+        val path = "/tmp/bastion-" + java.util.UUID.randomUUID().toString().take(12)
+        // Create it empty and private (0600) first, so the content is never readable by others.
+        client.write(path).use { }
+        client.setStat(path, client.stat(path).perms(0b110_000_000))
+        client.write(path).use { it.write(text.toByteArray(Charsets.UTF_8)) }
+        path
+    }
+
     /** Runs [command] on a separate exec channel of the same SSH connection; nothing reaches the shell. */
     suspend fun exec(command: String, maxBytes: Int = 8 * 1024 * 1024): String = withContext(Dispatchers.IO) {
         val conn = connection ?: throw IllegalStateException("Not connected")

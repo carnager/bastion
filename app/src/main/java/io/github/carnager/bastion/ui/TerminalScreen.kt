@@ -124,6 +124,7 @@ fun TerminalScreen(
     snippets: List<Snippet>,
     onSaveSnippet: (Snippet) -> Unit,
     onDeleteSnippet: (String) -> Unit,
+    onOpenFile: (String) -> Unit,
 ) {
     val status by session.status.collectAsState()
     val scheme by session.scheme.collectAsState()
@@ -291,6 +292,10 @@ fun TerminalScreen(
             onEdit = { text ->
                 finding = false
                 editing = TextFieldValue(text, TextRange(text.length))
+            },
+            onOpenFile = { path ->
+                finding = false
+                onOpenFile(path)
             },
             hostId = session.host.id,
             hostLabel = session.host.label,

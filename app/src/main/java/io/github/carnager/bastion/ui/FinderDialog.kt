@@ -77,6 +77,8 @@ fun FinderDialog(
     onRun: (String) -> Unit,
     /** Open the input field with this text. */
     onEdit: (String) -> Unit,
+    /** Open a remote file (absolute path) in the native viewer. */
+    onOpenFile: (String) -> Unit,
     hostId: String,
     hostLabel: String,
     snippets: List<Snippet>,
@@ -197,6 +199,7 @@ fun FinderDialog(
                         onQueryChange = { query = it },
                         onInsert = { text -> onPick(text, FinderKind.BROWSE) },
                         onRun = onRun,
+                        onOpenFile = onOpenFile,
                     )
                 } else {
                 // Where we're searching

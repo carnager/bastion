@@ -75,3 +75,21 @@ object RemoteLists {
         else -> base.trimEnd('/') + "/" + relative
     }
 }
+
+/** A remote file read for the viewer. [text] is null for binary files. */
+data class RemoteFile(
+    val path: String,
+    val text: String?,
+    val size: Long,
+    val modified: Long,
+    /** Only the first part was read. */
+    val truncated: Boolean,
+)
+
+sealed interface SaveResult {
+    data object Saved : SaveResult
+    /** Changed on the server since it was opened. */
+    data object Conflict : SaveResult
+    data object PermissionDenied : SaveResult
+    data class Failed(val message: String) : SaveResult
+}

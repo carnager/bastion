@@ -57,6 +57,7 @@ internal fun ColumnScope.BrowsePane(
     onQueryChange: (String) -> Unit,
     onInsert: (String) -> Unit,
     onRun: (String) -> Unit,
+    onOpenFile: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val cwd = remember { session.guessCwd() }
@@ -157,7 +158,7 @@ internal fun ColumnScope.BrowsePane(
                     if (!entry.isDir) append(humanSize(entry.size)).append(" · ")
                     if (entry.modified > 0) append(DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(entry.modified)))
                 },
-                onClick = { if (entry.isDir) open(entry.path) else selected = entry },
+                onClick = { if (entry.isDir) open(entry.path) else onOpenFile(entry.path) },
                 onLongClick = { selected = entry },
             )
         }
@@ -176,8 +177,9 @@ internal fun ColumnScope.BrowsePane(
                 SheetRow("Open folder", Ico.folder) { selected = null; open(entry.path) }
                 SheetRow("cd here", Ico.term) { selected = null; onRun("cd -- $shellPath") }
             } else {
-                SheetRow("Open in editor", Ico.edit) { selected = null; onRun("\${EDITOR:-vi} $shellPath") }
-                SheetRow("View with less", Ico.file) { selected = null; onRun("less $shellPath") }
+                SheetRow("Open in viewer", Ico.file) { selected = null; onOpenFile(entry.path) }
+                SheetRow("Open in \$EDITOR", Ico.edit) { selected = null; onRun("\${EDITOR:-vi} $shellPath") }
+                SheetRow("View with less", Ico.term) { selected = null; onRun("less $shellPath") }
                 SheetRow("cd to its folder", Ico.term) {
                     selected = null
                     onRun("cd -- " + shellQuote(RemoteDir.tilde(entry.path.substringBeforeLast('/').ifEmpty { "/" }, current?.home ?: "")))

@@ -38,6 +38,7 @@ sealed interface Screen {
     data object Keys : Screen
     data class Terminal(val sessionId: Long) : Screen
     data object Settings : Screen
+    data class FileView(val sessionId: Long, val path: String) : Screen
 
     /** Screens that slide up like a sheet rather than in from the side. */
     val isSheet: Boolean get() = this is EditHost
@@ -138,6 +139,7 @@ private fun Root(app: App) {
                                 app.store.update { v -> v.copy(snippets = v.snippets.filterNot { it.id == snippet.id } + snippet) }
                             },
                             onDeleteSnippet = { id -> app.store.update { v -> v.copy(snippets = v.snippets.filterNot { it.id == id }) } },
+                            onOpenFile = { path -> push(Screen.FileView(session.id, path)) },
                             onSetHostScheme = { id ->
                                 app.store.update { v ->
                                     v.copy(hosts = v.hosts.map { if (it.id == session.host.id) it.copy(colorScheme = id) else it })
@@ -180,6 +182,22 @@ private fun Root(app: App) {
                         )
                         Screen.Keys -> KeysScreen(vault = vault, store = app.store, onBack = ::pop)
                         Screen.Settings -> SettingsScreen(settings = app.settings, onBack = ::pop)
+                        is Screen.FileView -> {
+                            val session = sessions.firstOrNull { it.id == screen.sessionId }
+                            if (session == null) {
+                                LaunchedEffect(screen) { if (stack.lastOrNull() == screen) pop() }
+                            } else {
+                                FileViewScreen(
+                                    session = session,
+                                    path = screen.path,
+                                    onBack = ::pop,
+                                    onRunInTerminal = { command ->
+                                        session.replaceLine(command, run = true)
+                                        pop()
+                                    },
+                                )
+                            }
+                        }
                         is Screen.Terminal -> Unit
                     }
                 }
