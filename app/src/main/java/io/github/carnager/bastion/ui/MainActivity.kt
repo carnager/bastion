@@ -41,6 +41,7 @@ sealed interface Screen {
     data class FileView(val sessionId: Long, val path: String) : Screen
     data class Commands(val sessionId: Long) : Screen
     data class Files(val sessionId: Long) : Screen
+    data class Service(val sessionId: Long, val unit: String) : Screen
 
     /** Screens that slide up like a sheet rather than in from the side. */
     val isSheet: Boolean get() = this is EditHost
@@ -190,6 +191,19 @@ private fun Root(app: App) {
                                 onRun = { command -> session.replaceLine(command, run = true); pop() },
                                 onInsert = { command -> session.replaceLine(command, run = false); pop() },
                                 onEdit = { command -> session.pendingEdit.value = command; pop() },
+                                onOpenNative = { kind, value -> if (kind == "service") push(Screen.Service(session.id, value)) },
+                                onBack = ::pop,
+                            )
+                        }
+                        is Screen.Service -> WithSession(sessions, screen.sessionId, ::pop) { session ->
+                            ServiceScreen(
+                                session = session,
+                                unit = screen.unit,
+                                // Back to the terminal itself, past the Commands screen.
+                                onRunInTerminal = { command ->
+                                    session.replaceLine(command, run = true)
+                                    stack = stack.dropLastWhile { it !is Screen.Terminal }
+                                },
                                 onBack = ::pop,
                             )
                         }

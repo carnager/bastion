@@ -105,8 +105,15 @@ class TerminalSession(
     suspend fun choices(type: FieldType): List<Catalog.Choice> {
         val engine = if (tools()?.let { "docker" !in it && "podman" in it } == true) "podman" else "docker"
         val command = Catalog.sourceCommand(type, engine) ?: return emptyList()
-        return Catalog.parseChoices(type, exec("sh -c " + shellQuote(command)))
+        val choices = Catalog.parseChoices(type, exec("sh -c " + shellQuote(command)))
+        return if (type == FieldType.UNIT) Services.sortUnits(choices) else choices
     }
+
+    suspend fun serviceInfo(unit: String): ServiceInfo = Services.parseShow(unit, exec(Services.showCommand(unit)))
+
+    /** Recent journal entries of [unit], plus a notice if journalctl said something else (e.g. no permission). */
+    suspend fun journal(unit: String, lines: Int = 100): Pair<List<LogLine>, String?> =
+        Services.parseJournal(exec("sh -c " + shellQuote(Services.journalCommand(unit, lines))))
 
     @Volatile private var sftp: SftpClient? = null
 

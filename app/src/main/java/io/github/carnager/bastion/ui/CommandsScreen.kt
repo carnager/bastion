@@ -62,7 +62,14 @@ import kotlinx.coroutines.CancellationException
 import java.util.UUID
 
 /** A command being filled in: one step per field, then a preview. */
-private data class Fill(val title: String, val template: String, val danger: Boolean, val values: Map<String, String> = emptyMap()) {
+private data class Fill(
+    val title: String,
+    val template: String,
+    val danger: Boolean,
+    val values: Map<String, String> = emptyMap(),
+    /** Opens a native screen instead of a preview, e.g. "service". */
+    val native: String? = null,
+) {
     val fields: List<Field> = Templates.fields(template)
     val step: Int get() = fields.indexOfFirst { it.token !in values }.let { if (it < 0) fields.size else it }
     val field: Field? get() = fields.getOrNull(step)
@@ -75,6 +82,7 @@ private sealed interface CommandItem {
     val template: String
     val group: String
     val danger: Boolean
+    val native: String? get() = null
 
     data class Builtin(val entry: CatalogEntry) : CommandItem {
         override val key get() = "b:" + entry.id
@@ -82,6 +90,7 @@ private sealed interface CommandItem {
         override val template get() = entry.template
         override val group get() = entry.group
         override val danger get() = entry.danger
+        override val native get() = entry.native
     }
 
     data class Own(val snippet: Snippet) : CommandItem {
@@ -106,6 +115,8 @@ fun CommandsScreen(
     onRun: (String) -> Unit,
     onInsert: (String) -> Unit,
     onEdit: (String) -> Unit,
+    /** A native view for a filled command: kind ("service") and the first field's value. */
+    onOpenNative: (kind: String, value: String) -> Unit,
     onBack: () -> Unit,
 ) {
     val host = session.host
@@ -169,7 +180,7 @@ fun CommandsScreen(
                 },
                 query = query,
                 onPick = { item ->
-                    fill = Fill(item.title, item.template, item.danger)
+                    fill = Fill(item.title, item.template, item.danger, native = item.native)
                     query = ""
                 },
                 onLongPress = { managing = it },
@@ -177,8 +188,15 @@ fun CommandsScreen(
             field == null -> Preview(current, onRun, onInsert, onEdit)
             field.type == FieldType.TEXT -> TextStep(field) { value -> fill = current.copy(values = current.values + (field.token to value)) }
             else -> PickStep(field, session, query) { value ->
-                fill = current.copy(values = current.values + (field.token to value))
+                val next = current.copy(values = current.values + (field.token to value))
                 query = ""
+                if (next.native != null && next.field == null) {
+                    // Fully chosen: show it natively; Back from there returns to the list.
+                    fill = null
+                    onOpenNative(next.native, next.values.values.first())
+                } else {
+                    fill = next
+                }
             }
         }
     }

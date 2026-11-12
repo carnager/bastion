@@ -20,6 +20,8 @@ data class CatalogEntry(
     val requires: List<String> = emptyList(),
     /** Changes the system; the Run button turns red. */
     val danger: Boolean = false,
+    /** Shown in a native screen instead of running in the terminal (e.g. "service"). */
+    val native: String? = null,
 )
 
 object Templates {
@@ -79,7 +81,7 @@ object Catalog {
     private const val FILES = "Files"
 
     val all: List<CatalogEntry> = listOf(
-        CatalogEntry("svc-status", SVC, "Status of a service", "systemctl status {unit}", listOf("systemctl")),
+        CatalogEntry("svc-status", SVC, "Status of a service", "systemctl status {unit}", listOf("systemctl"), native = "service"),
         CatalogEntry("svc-restart", SVC, "Restart a service", "sudo systemctl restart {unit}", listOf("systemctl"), danger = true),
         CatalogEntry("svc-start", SVC, "Start a service", "sudo systemctl start {unit}", listOf("systemctl")),
         CatalogEntry("svc-stop", SVC, "Stop a service", "sudo systemctl stop {unit}", listOf("systemctl"), danger = true),
@@ -88,7 +90,7 @@ object Catalog {
         CatalogEntry("svc-timers", SVC, "Timers", "systemctl list-timers", listOf("systemctl")),
 
         CatalogEntry("log-follow", LOGS, "Follow a service’s log", "journalctl -u {unit} -f", listOf("journalctl")),
-        CatalogEntry("log-recent", LOGS, "Recent log of a service", "journalctl -u {unit} -n 200 --no-pager", listOf("journalctl")),
+        CatalogEntry("log-recent", LOGS, "Recent log of a service", "journalctl -u {unit} -n 200 --no-pager", listOf("journalctl"), native = "service"),
         CatalogEntry("log-errors", LOGS, "Errors since boot", "journalctl -b -p err --no-pager", listOf("journalctl")),
         CatalogEntry("log-all", LOGS, "Follow the whole journal", "journalctl -f", listOf("journalctl")),
         CatalogEntry("log-kernel", LOGS, "Kernel messages", "journalctl -k -n 100 --no-pager", listOf("journalctl")),
