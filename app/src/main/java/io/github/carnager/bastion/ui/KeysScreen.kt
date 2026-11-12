@@ -1,233 +1,298 @@
 package io.github.carnager.bastion.ui
 
 import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.ClipEntry
-import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import io.github.carnager.bastion.data.SshKey
 import io.github.carnager.bastion.data.Vault
 import io.github.carnager.bastion.data.VaultRepository
 import io.github.carnager.bastion.ssh.SshKeys
-import kotlinx.coroutines.launch
 import java.util.UUID
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun KeysScreen(vault: Vault, store: VaultRepository, onBack: () -> Unit) {
-    var addMenu by remember { mutableStateOf(false) }
-    var importing by remember { mutableStateOf(false) }
-    var generating by remember { mutableStateOf(false) }
-    var deleting by remember { mutableStateOf<SshKey?>(null) }
-    val clipboard = LocalClipboard.current
-    val scope = rememberCoroutineScope()
+/**
+ * Adding keys: from a file (the system file picker), from pasted text, or freshly generated.
+ * Asks for a passphrase only when the key turns out to be encrypted.
+ */
+@Stable
+class KeyAdder(private val store: VaultRepository, private val onAdded: (SshKey) -> Unit) {
+    private class Pending(val name: String, val text: String)
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Keys") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
-                actions = {
-                    Box {
-                        IconButton(onClick = { addMenu = true }) { Icon(Icons.Default.Add, "Add key") }
-                        DropdownMenu(expanded = addMenu, onDismissRequest = { addMenu = false }) {
-                            DropdownMenuItem(text = { Text("Generate Ed25519") }, onClick = { addMenu = false; generating = true })
-                            DropdownMenuItem(text = { Text("Import existing") }, onClick = { addMenu = false; importing = true })
-                        }
+    private var pending by mutableStateOf<Pending?>(null)
+    private var needsPassphrase by mutableStateOf(false)
+    private var error by mutableStateOf<String?>(null)
+    private var pasting by mutableStateOf(false)
+    private var generating by mutableStateOf(false)
+    internal var launchPicker: () -> Unit = {}
+
+    fun importFile() = launchPicker()
+    fun paste() { pasting = true }
+    fun generate() { generating = true }
+
+    internal fun picked(context: Context, uri: Uri) {
+        val text = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        }.getOrNull()
+        when {
+            text == null -> error = "Could not read that file."
+            text.size > 64 * 1024 -> error = "That file is too big to be an SSH key."
+            else -> attempt(displayName(context, uri) ?: "key", text.decodeToString(), "")
+        }
+    }
+
+    private fun attempt(name: String, text: String, passphrase: String) {
+        val trimmed = text.trim()
+        if (trimmed.startsWith("ssh-") || trimmed.startsWith("ecdsa-") || trimmed.startsWith("sk-")) {
+            error = "That is a public key. Pick the private key: the file without “.pub”."
+            return
+        }
+        val keyName = name.removeSuffix(".pem").removeSuffix(".key")
+        runCatching { SshKeys.parse(keyName, trimmed, passphrase) }
+            .onSuccess { pairs ->
+                val key = SshKey(
+                    id = UUID.randomUUID().toString(),
+                    name = keyName,
+                    privateKey = "$trimmed\n",
+                    passphrase = passphrase,
+                    publicKey = SshKeys.publicKeyLine(pairs.first().public, keyName),
+                )
+                store.update { it.copy(keys = it.keys + key) }
+                pending = null
+                needsPassphrase = false
+                pasting = false
+                Snack.show("Key “$keyName” added")
+                onAdded(key)
+            }
+            .onFailure { e ->
+                val encrypted = "ENCRYPTED" in trimmed || isEncryptedOpenSsh(trimmed)
+                if (encrypted) {
+                    pending = Pending(keyName, trimmed)
+                    if (needsPassphrase && passphrase.isNotEmpty()) error = "Wrong passphrase."
+                    needsPassphrase = true
+                } else {
+                    error = e.message ?: "Not a private key this app can read."
+                }
+            }
+    }
+
+    @Composable
+    fun Dialogs() {
+        val context = LocalContext.current
+        val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) picked(context, uri)
+        }
+        launchPicker = { picker.launch(arrayOf("*/*")) }
+
+        val p = pending
+        if (needsPassphrase && p != null) {
+            var passphrase by remember { mutableStateOf("") }
+            AlertDialog(
+                onDismissRequest = { needsPassphrase = false; pending = null },
+                title = { Text("Passphrase for ${p.name}") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("This key is encrypted. The passphrase is saved with it in the app’s encrypted storage.", fontSize = 14.sp, color = extra.muted)
+                        TextInput(passphrase, { passphrase = it }, secret = true, placeholder = "Passphrase")
                     }
                 },
-            )
-        },
-    ) { padding ->
-        if (vault.keys.isEmpty()) {
-            Text(
-                "No keys. Generate one here, or import an existing private key.",
-                modifier = Modifier.padding(padding).padding(Dimens.gutter),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                confirmButton = { TextButton(onClick = { attempt(p.name, p.text, passphrase) }, enabled = passphrase.isNotEmpty()) { Text("Unlock") } },
+                dismissButton = { TextButton(onClick = { needsPassphrase = false; pending = null }) { Text("Cancel") } },
             )
         }
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = padding) {
-            items(vault.keys, key = { it.id }) { key ->
-                KeyRow(
-                    key = key,
-                    usedBy = vault.hosts.count { it.keyId == key.id },
-                    onCopy = {
-                        scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("public key", key.publicKey))) }
-                    },
-                    onDelete = { deleting = key },
-                )
-            }
+        if (pasting) {
+            var name by remember { mutableStateOf("") }
+            var text by remember { mutableStateOf("") }
+            AlertDialog(
+                onDismissRequest = { pasting = false },
+                title = { Text("Paste private key") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        TextInput(name, { name = it }, placeholder = "Name")
+                        TextInput(text, { text = it }, placeholder = "-----BEGIN OPENSSH PRIVATE KEY-----", mono = true, singleLine = false, minHeight = 120.dp)
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { attempt(name.trim().ifEmpty { "key" }, text, "") }, enabled = text.isNotBlank()) { Text("Add") }
+                },
+                dismissButton = { TextButton(onClick = { pasting = false }) { Text("Cancel") } },
+            )
+        }
+        if (generating) {
+            var name by remember { mutableStateOf("bastion@${android.os.Build.MODEL.replace(' ', '-')}") }
+            AlertDialog(
+                onDismissRequest = { generating = false },
+                title = { Text("New Ed25519 key") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Add its public key to ~/.ssh/authorized_keys on your servers afterwards.", fontSize = 14.sp, color = extra.muted)
+                        TextInput(name, { name = it }, placeholder = "Name / comment")
+                    }
+                },
+                confirmButton = {
+                    TextButton(enabled = name.isNotBlank(), onClick = {
+                        val (private, public) = SshKeys.generateEd25519(name.trim())
+                        val key = SshKey(UUID.randomUUID().toString(), name.trim(), private, publicKey = public)
+                        store.update { it.copy(keys = it.keys + key) }
+                        generating = false
+                        copyText(context, public, "Public key")
+                        Snack.show("Key created · public key copied")
+                        onAdded(key)
+                    }) { Text("Generate") }
+                },
+                dismissButton = { TextButton(onClick = { generating = false }) { Text("Cancel") } },
+            )
+        }
+        error?.let {
+            AlertDialog(
+                onDismissRequest = { error = null },
+                title = { Text("Can’t use this key") },
+                text = { Text(it) },
+                confirmButton = { TextButton(onClick = { error = null }) { Text("OK") } },
+            )
         }
     }
 
-    if (generating) {
-        GenerateKeyDialog(
-            onDismiss = { generating = false },
-            onCreate = { name ->
-                val (private, public) = SshKeys.generateEd25519(name)
-                store.update { it.copy(keys = it.keys + SshKey(UUID.randomUUID().toString(), name, private, publicKey = public)) }
-                generating = false
-            },
-        )
+    private companion object {
+        fun displayName(context: Context, uri: Uri): String? = runCatching {
+            context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+                if (it.moveToFirst()) it.getString(0) else null
+            }
+        }.getOrNull()
+
+        /** OpenSSH's own format: "openssh-key-v1\0", then the cipher name, which is "none" when unencrypted. */
+        fun isEncryptedOpenSsh(text: String): Boolean {
+            if ("BEGIN OPENSSH PRIVATE KEY" !in text) return false
+            val body = text.lines().filterNot { it.startsWith("-----") }.joinToString("")
+            val bytes = runCatching { java.util.Base64.getMimeDecoder().decode(body) }.getOrNull() ?: return false
+            val magic = 15
+            if (bytes.size < magic + 4) return false
+            val len = java.nio.ByteBuffer.wrap(bytes, magic, 4).int
+            if (len <= 0 || magic + 4 + len > bytes.size) return false
+            return String(bytes, magic + 4, len, Charsets.US_ASCII) != "none"
+        }
     }
-    if (importing) {
-        ImportKeyDialog(
-            onDismiss = { importing = false },
-            onImport = { key -> store.update { it.copy(keys = it.keys + key) }; importing = false },
-        )
+}
+
+@Composable
+fun rememberKeyAdder(store: VaultRepository, onAdded: (SshKey) -> Unit = {}): KeyAdder =
+    remember(store) { KeyAdder(store, onAdded) }.also { it.Dialogs() }
+
+fun copyText(context: Context, text: String, label: String) {
+    context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText(label, text))
+}
+
+@Composable
+fun KeysScreen(vault: Vault, store: VaultRepository, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val adder = rememberKeyAdder(store)
+    var selected by remember { mutableStateOf<SshKey?>(null) }
+    var deleting by remember { mutableStateOf<SshKey?>(null) }
+
+    Column(Modifier.fillMaxSize()) {
+        ScreenHeader("Keys", onNav = onBack)
+        Column(
+            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedAction("Import file", adder::importFile, Modifier.weight(1f), icon = Ico.file)
+                OutlinedAction("Generate", adder::generate, Modifier.weight(1f), icon = Ico.sparkle)
+            }
+            TextAction("Paste key text instead", adder::paste)
+            Spacer(Modifier.height(4.dp))
+            if (vault.keys.isEmpty()) {
+                Hint("No keys yet. Import your existing private key (e.g. id_ed25519), or generate a new one here.")
+            } else {
+                SectionLabel("Your keys · ${vault.keys.size}")
+                InfoCard {
+                    vault.keys.forEachIndexed { index, key ->
+                        val users = vault.hosts.count { it.keyId == key.id }
+                        CardRow(first = index == 0, onClick = { selected = key }) {
+                            IconTile(Ico.key, extra.fg2.copy(alpha = 0.85f), 36.dp)
+                            Column(Modifier.weight(1f)) {
+                                Text(key.name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    key.publicKey.substringBefore(' ') + when (users) {
+                                        0 -> " · unused"
+                                        1 -> " · 1 host"
+                                        else -> " · $users hosts"
+                                    },
+                                    fontSize = 13.sp, color = extra.muted, maxLines = 1,
+                                )
+                            }
+                            IconAction(Ico.copy, "Copy public key", {
+                                copyText(context, key.publicKey, "Public key")
+                                Snack.show("Public key copied")
+                            })
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+
+    selected?.let { key ->
+        Sheet(onDismiss = { selected = null }) {
+            Text(key.name, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 12.dp, bottom = 4.dp))
+            Text(
+                key.publicKey, style = MonoStyle, fontSize = 11.sp, color = extra.muted, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 8.dp),
+            )
+            SheetRow("Copy public key", Ico.copy) {
+                copyText(context, key.publicKey, "Public key")
+                Snack.show("Public key copied")
+                selected = null
+            }
+            SheetRow("Delete key", Ico.trash, color = extra.red) { deleting = key; selected = null }
+        }
     }
     deleting?.let { key ->
         val users = vault.hosts.filter { it.keyId == key.id }
         AlertDialog(
             onDismissRequest = { deleting = null },
-            title = { Text("Delete ${key.name}?") },
-            text = { if (users.isNotEmpty()) Text("Used by: ${users.joinToString { it.label }}") },
+            title = { Text("Delete “${key.name}”?") },
+            text = {
+                Text(
+                    if (users.isEmpty()) "The private key is removed from this phone."
+                    else "Used by ${users.joinToString { it.label }}. Those hosts can’t log in until you pick another key.",
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     store.update { v -> v.copy(keys = v.keys.filterNot { it.id == key.id }) }
                     deleting = null
-                }) { Text("Delete") }
+                }) { Text("Delete", color = extra.red) }
             },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } },
         )
     }
-}
-
-@Composable
-private fun KeyRow(key: SshKey, usedBy: Int, onCopy: () -> Unit, onDelete: () -> Unit) {
-    var menu by remember { mutableStateOf(false) }
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = Dimens.rowHeight).clickable(onClick = onCopy).padding(start = Dimens.gutter),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(key.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                key.publicKey.substringBefore(' ') + if (usedBy > 0) " · $usedBy host${if (usedBy == 1) "" else "s"}" else "",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Box {
-            IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "More") }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text("Copy public key") }, onClick = { menu = false; onCopy() })
-                DropdownMenuItem(text = { Text("Delete") }, onClick = { menu = false; onDelete() })
-            }
-        }
-    }
-}
-
-@Composable
-private fun GenerateKeyDialog(onDismiss: () -> Unit, onCreate: (String) -> Unit) {
-    var name by rememberSaveable { mutableStateOf("bastion@${android.os.Build.MODEL.replace(' ', '-')}") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("New Ed25519 key") },
-        text = {
-            OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name / comment") }, singleLine = true)
-        },
-        confirmButton = { TextButton(enabled = name.isNotBlank(), onClick = { onCreate(name.trim()) }) { Text("Generate") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
-}
-
-@Composable
-private fun ImportKeyDialog(onDismiss: () -> Unit, onImport: (SshKey) -> Unit) {
-    val context = LocalContext.current
-    var name by rememberSaveable { mutableStateOf("") }
-    var text by rememberSaveable { mutableStateOf("") }
-    var passphrase by rememberSaveable { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes().decodeToString() } }
-                .onSuccess { text = it.orEmpty(); if (name.isBlank()) name = uri.lastPathSegment?.substringAfterLast('/').orEmpty() }
-                .onFailure { error = "Could not read file." }
-        }
-    }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Import key") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, singleLine = true)
-                OutlinedTextField(
-                    value = text, onValueChange = { text = it; error = null },
-                    label = { Text("Private key") }, minLines = 3, maxLines = 5,
-                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                )
-                TextButton(onClick = { picker.launch(arrayOf("*/*")) }) { Text("Choose file…") }
-                OutlinedTextField(
-                    value = passphrase, onValueChange = { passphrase = it; error = null },
-                    label = { Text("Passphrase (if any)") }, singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                )
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-            }
-        },
-        confirmButton = {
-            TextButton(enabled = text.isNotBlank(), onClick = {
-                val keyName = name.trim().ifBlank { "key" }
-                runCatching { SshKeys.parse(keyName, text, passphrase) }
-                    .onSuccess { pairs ->
-                        onImport(
-                            SshKey(
-                                id = UUID.randomUUID().toString(),
-                                name = keyName,
-                                privateKey = text.trim() + "\n",
-                                passphrase = passphrase,
-                                publicKey = SshKeys.publicKeyLine(pairs.first().public, keyName),
-                            ),
-                        )
-                    }
-                    .onFailure { error = it.message }
-            }) { Text("Import") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
 }

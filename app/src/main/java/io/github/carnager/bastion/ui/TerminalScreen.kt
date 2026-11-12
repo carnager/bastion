@@ -21,9 +21,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -58,10 +55,15 @@ import org.connectbot.terminal.ModifierManager
 import org.connectbot.terminal.Terminal
 import org.connectbot.terminal.VTermKey
 
-private val TerminalBackground = Color(0xFF101010)
-private val BarColor = Color(0xFF1C1C1C)
-private val KeyText = Color(0xFFDDDDDD)
-private val Accent = Color(0xFF7FB4FF)
+private val TerminalBackground = TermColors.bg
+private val BarColor = TermColors.bar
+private val KeyText = TermColors.key
+private val Accent = TermColors.accent
+
+private object Dimens {
+    val barHeight = 40.dp
+    val keyHeight = 40.dp
+}
 
 @Composable
 fun TerminalScreen(
@@ -100,7 +102,7 @@ fun TerminalScreen(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 initialFontSize = 11.sp,
                 backgroundColor = TerminalBackground,
-                foregroundColor = Color(0xFFE6E6E6),
+                foregroundColor = TermColors.fg,
                 keyboardEnabled = true,
                 modifierManager = modifiers,
                 // termlib would otherwise turn Back into terminal input, which ends the shell.
@@ -127,10 +129,11 @@ fun TerminalScreen(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                TextButton(onClick = session::reconnect) { Text("Reconnect") }
-                TextButton(onClick = onClose) { Text("Close") }
+                TextButton(onClick = session::reconnect) { Text("Reconnect", color = Accent) }
+                TextButton(onClick = onClose) { Text("Close", color = KeyText) }
             }
         }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(TermColors.line))
         ExtraKeys(session, modifiers)
     }
 }
@@ -151,7 +154,7 @@ private fun SessionBar(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IconButton(onClick = onBack, modifier = Modifier.size(Dimens.barHeight)) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Hosts", tint = KeyText, modifier = Modifier.size(18.dp))
+            Icon(Ico.back, "Hosts", tint = KeyText, modifier = Modifier.size(20.dp))
         }
         Row(
             Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState()),
@@ -163,7 +166,7 @@ private fun SessionBar(
                 val selected = s.id == current.id
                 Row(
                     Modifier.clip(RoundedCornerShape(6.dp))
-                        .background(if (selected) Color(0xFF2E2E2E) else Color.Transparent)
+                        .background(if (selected) TermColors.keyBg else Color.Transparent)
                         .clickable { onSwitch(s.id) }
                         .padding(horizontal = 8.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -183,7 +186,7 @@ private fun SessionBar(
         }
         Box {
             IconButton(onClick = { menu = true }, modifier = Modifier.size(Dimens.barHeight)) {
-                Icon(Icons.Default.MoreVert, "Menu", tint = KeyText, modifier = Modifier.size(18.dp))
+                Icon(Ico.more, "Menu", tint = KeyText, modifier = Modifier.size(20.dp))
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text("Paste") }, onClick = { menu = false; onPaste() })
