@@ -3,6 +3,7 @@ package io.github.carnager.bastion.session
 import android.util.Log
 import androidx.compose.ui.graphics.Color
 import io.github.carnager.bastion.data.Host
+import io.github.carnager.bastion.data.TermScheme
 import io.github.carnager.bastion.ssh.Connector
 import io.github.carnager.bastion.ssh.SshConnection
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +32,8 @@ class TerminalSession(
     val host: Host,
     private val connector: Connector,
     private val scope: CoroutineScope,
+    /** Effective color scheme; changes apply to the open terminal immediately. */
+    val scheme: StateFlow<TermScheme>,
 ) {
     private val _status = MutableStateFlow<SessionStatus>(SessionStatus.Connecting)
     val status: StateFlow<SessionStatus> = _status.asStateFlow()
@@ -47,12 +50,18 @@ class TerminalSession(
     private var job: Job? = null
 
     val emulator: TerminalEmulator = TerminalEmulatorFactory.create(
-        defaultForeground = Color(0xFFE6E6E6),
-        defaultBackground = Color(0xFF101010),
+        defaultForeground = Color(scheme.value.argb(scheme.value.foreground)),
+        defaultBackground = Color(scheme.value.argb(scheme.value.background)),
         onKeyboardInput = { bytes -> send(bytes) },
         onResize = { size -> if (shell != null) outgoing.trySend(Outgoing.Resize(size.columns, size.rows)) },
         autoDetectUrls = true,
     )
+
+    private val schemeJob = scope.launch(Dispatchers.Main) {
+        scheme.collect { s ->
+            runCatching { emulator.applyColorScheme(s.ansiArgb, s.argb(s.foreground), s.argb(s.background)) }
+        }
+    }
 
     fun start() {
         if (job?.isActive == true) return
@@ -127,6 +136,7 @@ class TerminalSession(
 
     fun close() {
         job?.cancel()
+        schemeJob.cancel()
         shell = null
         connection?.close()
         connection = null

@@ -30,6 +30,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.carnager.bastion.data.AuthMethod
+import io.github.carnager.bastion.data.ColorSchemes
 import io.github.carnager.bastion.data.Host
 import io.github.carnager.bastion.data.Vault
 import io.github.carnager.bastion.data.VaultRepository
@@ -42,6 +43,7 @@ fun HostEditScreen(
     store: VaultRepository,
     hostId: String?,
     template: Host?,
+    globalSchemeId: String,
     onSave: (Host) -> Unit,
     onDelete: (String) -> Unit,
     onBack: () -> Unit,
@@ -60,7 +62,9 @@ fun HostEditScreen(
     var password by rememberSaveable { mutableStateOf(original.password) }
     var keyId by rememberSaveable { mutableStateOf(original.keyId ?: vault.keys.singleOrNull()?.id) }
     var jumpHostId by rememberSaveable { mutableStateOf(original.jumpHostId) }
+    var colorScheme by rememberSaveable { mutableStateOf(original.colorScheme) }
     var pickJump by remember { mutableStateOf(false) }
+    var pickColors by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     val adder = rememberKeyAdder(store) { keyId = it.id }
 
@@ -83,6 +87,7 @@ fun HostEditScreen(
                             password = if (auth == AuthMethod.PASSWORD) password else "",
                             keyId = if (auth == AuthMethod.KEY) keyId else null,
                             jumpHostId = jumpHostId,
+                            colorScheme = colorScheme,
                         ),
                     )
                 },
@@ -143,6 +148,22 @@ fun HostEditScreen(
                 Hint("Reach this host through another saved host, like ssh -J. Jump hosts can be chained.")
             }
 
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                InputLabel("Terminal colors")
+                val own = ColorSchemes.byId(colorScheme)
+                val shown = own ?: ColorSchemes.orDefault(globalSchemeId)
+                InfoCard(radius = 14.dp) {
+                    CardRow(first = true, onClick = { pickColors = true }) {
+                        SchemePreview(shown)
+                        Column(Modifier.weight(1f)) {
+                            Text(shown.name, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(if (own == null) "Same as other hosts" else "Only this host", fontSize = 13.sp, color = extra.muted)
+                        }
+                        Icon(Ico.chevron, null, Modifier.size(18.dp), tint = extra.muted)
+                    }
+                }
+            }
+
             if (hostId != null) {
                 Spacer(Modifier.height(4.dp))
                 OutlinedAction("Delete host", { confirmDelete = true }, Modifier.fillMaxWidth(), icon = Ico.trash, color = extra.red)
@@ -163,6 +184,15 @@ fun HostEditScreen(
                 Hint("Save the jump host itself as a host first; it then shows up here.", Modifier.padding(12.dp))
             }
         }
+    }
+    if (pickColors) {
+        SchemeSheet(
+            title = "Terminal colors",
+            selectedId = colorScheme,
+            defaultOption = "Same as other hosts (${ColorSchemes.orDefault(globalSchemeId).name})",
+            onPick = { colorScheme = it; pickColors = false },
+            onDismiss = { pickColors = false },
+        )
     }
     if (confirmDelete) {
         AlertDialog(

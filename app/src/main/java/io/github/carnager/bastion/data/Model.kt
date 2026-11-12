@@ -18,6 +18,8 @@ data class Host(
     val keyId: String? = null,
     /** Saved host to tunnel through (OpenSSH ProxyJump). That host may itself have a jump host. */
     val jumpHostId: String? = null,
+    /** Terminal color scheme for this host; null follows the global default. */
+    val colorScheme: String? = null,
     val lastUsed: Long = 0,
 ) {
     val label: String get() = name.ifBlank { hostname }

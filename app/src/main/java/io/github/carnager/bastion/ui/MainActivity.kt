@@ -59,6 +59,7 @@ private fun Root(app: App) {
     val vault by app.store.vault.collectAsState()
     val sessions by app.sessions.sessions.collectAsState()
     val prompt by app.prompter.current.collectAsState()
+    val globalScheme by app.settings.schemeId.collectAsState()
 
     fun push(screen: Screen) { stack = stack + screen }
     fun pop() { if (stack.size > 1) stack = stack.dropLast(1) }
@@ -101,6 +102,14 @@ private fun Root(app: App) {
                                 if (remaining.isEmpty()) pop() else replace(Screen.Terminal(remaining.last().id))
                             },
                             onBack = ::pop,
+                            globalSchemeId = globalScheme,
+                            hostSchemeId = vault.host(session.host.id)?.colorScheme,
+                            onSetGlobalScheme = app.settings::setSchemeId,
+                            onSetHostScheme = { id ->
+                                app.store.update { v ->
+                                    v.copy(hosts = v.hosts.map { if (it.id == session.host.id) it.copy(colorScheme = id) else it })
+                                }
+                            },
                         )
                     }
                 }
@@ -122,6 +131,7 @@ private fun Root(app: App) {
                             store = app.store,
                             hostId = screen.id,
                             template = vault.host(screen.templateId),
+                            globalSchemeId = globalScheme,
                             onSave = { host ->
                                 app.store.update { v ->
                                     v.copy(

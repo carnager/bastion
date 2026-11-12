@@ -1,5 +1,15 @@
 package io.github.carnager.bastion.ui
 
+import android.app.Activity
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+import io.github.carnager.bastion.data.ColorSchemes
+import io.github.carnager.bastion.data.TermScheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -55,10 +65,26 @@ import org.connectbot.terminal.ModifierManager
 import org.connectbot.terminal.Terminal
 import org.connectbot.terminal.VTermKey
 
-private val TerminalBackground = TermColors.bg
-private val BarColor = TermColors.bar
-private val KeyText = TermColors.key
-private val Accent = TermColors.accent
+/** Terminal chrome (bars, keys) derived from the active color scheme, so light schemes get light bars. */
+private data class Chrome(val bg: Color, val fg: Color, val bar: Color, val line: Color, val keyBg: Color, val key: Color, val accent: Color) {
+    companion object {
+        fun of(s: TermScheme): Chrome {
+            val bg = s.color(s.background)
+            val fg = s.color(s.foreground)
+            return Chrome(
+                bg = bg, fg = fg,
+                bar = lerp(bg, fg, 0.06f), line = lerp(bg, fg, 0.14f), keyBg = lerp(bg, fg, 0.14f),
+                key = lerp(fg, bg, 0.12f), accent = s.color(s.ansi[12]),
+            )
+        }
+    }
+}
+
+private val LocalChrome = staticCompositionLocalOf { Chrome.of(ColorSchemes.all.first()) }
+private val TerminalBackground: Color @Composable get() = LocalChrome.current.bg
+private val BarColor: Color @Composable get() = LocalChrome.current.bar
+private val KeyText: Color @Composable get() = LocalChrome.current.key
+private val Accent: Color @Composable get() = LocalChrome.current.accent
 
 private object Dimens {
     val barHeight = 40.dp
@@ -72,12 +98,34 @@ fun TerminalScreen(
     onSwitch: (Long) -> Unit,
     onClose: () -> Unit,
     onBack: () -> Unit,
+    globalSchemeId: String,
+    hostSchemeId: String?,
+    onSetGlobalScheme: (String) -> Unit,
+    onSetHostScheme: (String?) -> Unit,
 ) {
     val status by session.status.collectAsState()
+    val scheme by session.scheme.collectAsState()
+    val chrome = remember(scheme) { Chrome.of(scheme) }
     val modifiers = remember { StickyModifiers() }
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
+    var picking by remember { mutableStateOf(false) }
 
+    // Status bar icons readable on light schemes; restored when leaving the terminal.
+    val view = LocalView.current
+    val systemDark = isSystemInDarkTheme()
+    DisposableEffect(scheme.isLight) {
+        val window = (view.context as? Activity)?.window
+        val controller = window?.let { WindowCompat.getInsetsController(it, view) }
+        controller?.isAppearanceLightStatusBars = scheme.isLight
+        controller?.isAppearanceLightNavigationBars = scheme.isLight
+        onDispose {
+            controller?.isAppearanceLightStatusBars = !systemDark
+            controller?.isAppearanceLightNavigationBars = !systemDark
+        }
+    }
+
+    CompositionLocalProvider(LocalChrome provides chrome) {
     Column(
         Modifier.fillMaxSize().background(TerminalBackground).windowInsetsPadding(WindowInsets.safeDrawing),
     ) {
@@ -94,6 +142,7 @@ fun TerminalScreen(
             },
             onReconnect = session::reconnect,
             onClose = onClose,
+            onColors = { picking = true },
         )
         // Keyed by session so switching tabs gets a fresh view bound to the other emulator.
         androidx.compose.runtime.key(session.id) {
@@ -102,7 +151,7 @@ fun TerminalScreen(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 initialFontSize = 11.sp,
                 backgroundColor = TerminalBackground,
-                foregroundColor = TermColors.fg,
+                foregroundColor = chrome.fg,
                 keyboardEnabled = true,
                 modifierManager = modifiers,
                 // termlib would otherwise turn Back into terminal input, which ends the shell.
@@ -133,8 +182,26 @@ fun TerminalScreen(
                 TextButton(onClick = onClose) { Text("Close", color = KeyText) }
             }
         }
-        Box(Modifier.fillMaxWidth().height(1.dp).background(TermColors.line))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(chrome.line))
         ExtraKeys(session, modifiers)
+    }
+    }
+
+    if (picking) {
+        var onlyThisHost by remember { mutableStateOf(hostSchemeId != null) }
+        SchemeSheet(
+            title = "Colors",
+            selectedId = if (onlyThisHost) hostSchemeId else globalSchemeId,
+            defaultOption = if (onlyThisHost) "Same as other hosts" else null,
+            onPick = { id -> if (onlyThisHost) onSetHostScheme(id) else id?.let(onSetGlobalScheme) },
+            onDismiss = { picking = false },
+            header = {
+                Row(Modifier.padding(start = 4.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SelectChip("All hosts", !onlyThisHost) { onlyThisHost = false }
+                    SelectChip("Only ${session.host.label}", onlyThisHost) { onlyThisHost = true }
+                }
+            },
+        )
     }
 }
 
@@ -147,6 +214,7 @@ private fun SessionBar(
     onPaste: () -> Unit,
     onReconnect: () -> Unit,
     onClose: () -> Unit,
+    onColors: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
     Row(
@@ -166,7 +234,7 @@ private fun SessionBar(
                 val selected = s.id == current.id
                 Row(
                     Modifier.clip(RoundedCornerShape(6.dp))
-                        .background(if (selected) TermColors.keyBg else Color.Transparent)
+                        .background(if (selected) LocalChrome.current.keyBg else Color.Transparent)
                         .clickable { onSwitch(s.id) }
                         .padding(horizontal = 8.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -175,7 +243,7 @@ private fun SessionBar(
                     Spacer(Modifier.width(6.dp))
                     Text(
                         s.host.label,
-                        color = if (selected) Color.White else KeyText.copy(alpha = 0.7f),
+                        color = if (selected) LocalChrome.current.fg else KeyText.copy(alpha = 0.7f),
                         style = MaterialTheme.typography.labelMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -190,6 +258,7 @@ private fun SessionBar(
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text("Paste") }, onClick = { menu = false; onPaste() })
+                DropdownMenuItem(text = { Text("Colors") }, onClick = { menu = false; onColors() })
                 DropdownMenuItem(text = { Text("Reconnect") }, onClick = { menu = false; onReconnect() })
                 DropdownMenuItem(text = { Text("Disconnect") }, onClick = { menu = false; onClose() })
             }
@@ -275,7 +344,7 @@ private fun ModifierKey(label: String, state: StickyModifiers.State, onClick: ()
     val (bg, fg) = when (state) {
         StickyModifiers.State.OFF -> Color.Transparent to KeyText
         StickyModifiers.State.ONCE -> Accent.copy(alpha = 0.25f) to Accent
-        StickyModifiers.State.LOCKED -> Accent to Color.Black
+        StickyModifiers.State.LOCKED -> Accent to TerminalBackground
     }
     Box(
         Modifier.fillMaxHeight().widthIn(min = 48.dp).padding(2.dp).clip(RoundedCornerShape(5.dp)).background(bg).clickable(onClick = onClick),

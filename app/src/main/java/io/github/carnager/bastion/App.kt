@@ -1,6 +1,7 @@
 package io.github.carnager.bastion
 
 import android.app.Application
+import io.github.carnager.bastion.data.Settings
 import io.github.carnager.bastion.data.VaultStore
 import io.github.carnager.bastion.session.SessionManager
 import io.github.carnager.bastion.session.SessionService
@@ -22,6 +23,8 @@ class App : Application() {
     val prompter = Prompter()
     lateinit var sessions: SessionManager
         private set
+    lateinit var settings: Settings
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -32,7 +35,8 @@ class App : Application() {
         PathUtils.setUserHomeFolderResolver { filesDir.toPath() }
 
         store = VaultStore(this)
-        sessions = SessionManager(store, Connector(store, prompter))
+        settings = Settings(this)
+        sessions = SessionManager(store, settings, Connector(store, prompter))
         CoroutineScope(SupervisorJob() + Dispatchers.Main).launch {
             sessions.sessions.map { it.size }.distinctUntilChanged().collect { SessionService.update(this@App, it) }
         }
