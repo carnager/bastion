@@ -32,6 +32,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.carnager.bastion.App
 import io.github.carnager.bastion.data.SshKey
 import io.github.carnager.bastion.data.Vault
 import io.github.carnager.bastion.data.VaultRepository
@@ -109,7 +110,10 @@ class KeyAdder(private val store: VaultRepository, private val onAdded: (SshKey)
         val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri != null) picked(context, uri)
         }
-        launchPicker = { picker.launch(arrayOf("*/*")) }
+        launchPicker = {
+            (context.applicationContext as App).lock.allowLeaving()
+            picker.launch(arrayOf("*/*"))
+        }
 
         val p = pending
         if (needsPassphrase && p != null) {

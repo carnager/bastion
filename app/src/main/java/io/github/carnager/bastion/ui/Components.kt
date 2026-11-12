@@ -98,6 +98,9 @@ object Ico {
     val shield = strokeIcon("shield", "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM8.5 12l2.5 2.5 4.5-5", 2f)
     val more = strokeIcon("more", "M12 5h.01M12 12h.01M12 19h.01", 3f)
     val power = strokeIcon("power", "M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0", 2f)
+    val lock = strokeIcon("lock", "M6.5 10h11a2.5 2.5 0 0 1 2.5 2.5v6a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 18.5v-6A2.5 2.5 0 0 1 6.5 10zM8 10V7a4 4 0 0 1 8 0v3", 2f)
+    val fingerprint = strokeIcon("fingerprint", "M7.5 4.6A9 9 0 0 1 21 12v1M3 15.5V12a9 9 0 0 1 1.8-5.4M12 7a5 5 0 0 1 5 5v2a14 14 0 0 1-1 5M7 12a5 5 0 0 1 2.2-4.1M7 12v2a10 10 0 0 1-1.5 5.3M12 11v3a18 18 0 0 1-2 8M15.5 21a20 20 0 0 0 .5-4", 1.5f)
+    val settings = strokeIcon("settings", "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1")
 }
 
 // ---- tiles ---------------------------------------------------------------------------
@@ -314,6 +317,17 @@ fun WarnBanner(modifier: Modifier = Modifier, content: @Composable RowScope.() -
         Icon(Ico.alert, null, Modifier.size(18.dp), tint = extra.warnFg)
         content()
     }
+}
+
+@Composable
+fun AccentSwitch(checked: Boolean, onChange: (Boolean) -> Unit) {
+    androidx.compose.material3.Switch(
+        checked, onChange,
+        colors = androidx.compose.material3.SwitchDefaults.colors(
+            checkedTrackColor = extra.accent, checkedThumbColor = Color.White,
+            uncheckedTrackColor = extra.chip, uncheckedBorderColor = extra.line, uncheckedThumbColor = extra.muted,
+        ),
+    )
 }
 
 // ---- inputs --------------------------------------------------------------------------

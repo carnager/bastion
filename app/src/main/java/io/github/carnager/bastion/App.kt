@@ -25,6 +25,8 @@ class App : Application() {
         private set
     lateinit var settings: Settings
         private set
+    lateinit var lock: AppLock
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -36,6 +38,7 @@ class App : Application() {
 
         store = VaultStore(this)
         settings = Settings(this)
+        lock = AppLock(settings)
         sessions = SessionManager(store, settings, Connector(store, prompter))
         CoroutineScope(SupervisorJob() + Dispatchers.Main).launch {
             sessions.sessions.map { it.size }.distinctUntilChanged().collect { SessionService.update(this@App, it) }

@@ -3,7 +3,8 @@ package io.github.carnager.bastion.ui
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import android.os.Build
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -36,20 +37,35 @@ sealed interface Screen {
     data class EditHost(val id: String?, val templateId: String? = null) : Screen
     data object Keys : Screen
     data class Terminal(val sessionId: Long) : Screen
+    data object Settings : Screen
 
     /** Screens that slide up like a sheet rather than in from the side. */
     val isSheet: Boolean get() = this is EditHost
 }
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
+    private val app get() = application as App
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
         }
-        val app = application as App
+        val app = app
         setContent { BastionTheme { Root(app) } }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        app.lock.onForeground()
+        // Keep terminal contents out of the recent-apps preview while the lock is on.
+        if (Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(!app.settings.lockEnabled.value)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        app.lock.onBackground()
     }
 }
 
@@ -60,6 +76,12 @@ private fun Root(app: App) {
     val sessions by app.sessions.sessions.collectAsState()
     val prompt by app.prompter.current.collectAsState()
     val globalScheme by app.settings.schemeId.collectAsState()
+    val locked by app.lock.locked.collectAsState()
+
+    if (locked) {
+        Box(Modifier.fillMaxSize().background(extra.bg)) { LockScreen(onUnlocked = app.lock::unlocked) }
+        return
+    }
 
     fun push(screen: Screen) { stack = stack + screen }
     fun pop() { if (stack.size > 1) stack = stack.dropLast(1) }
@@ -125,6 +147,7 @@ private fun Root(app: App) {
                             onDuplicate = { push(Screen.EditHost(null, templateId = it.id)) },
                             onDelete = { id -> deleteHost(app, id) },
                             onKeys = { push(Screen.Keys) },
+                            onSettings = { push(Screen.Settings) },
                         )
                         is Screen.EditHost -> HostEditScreen(
                             vault = vault,
@@ -145,6 +168,7 @@ private fun Root(app: App) {
                             onBack = ::pop,
                         )
                         Screen.Keys -> KeysScreen(vault = vault, store = app.store, onBack = ::pop)
+                        Screen.Settings -> SettingsScreen(settings = app.settings, onBack = ::pop)
                         is Screen.Terminal -> Unit
                     }
                 }

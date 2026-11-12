@@ -56,6 +56,7 @@ fun HostListScreen(
     onDuplicate: (Host) -> Unit,
     onDelete: (String) -> Unit,
     onKeys: () -> Unit,
+    onSettings: () -> Unit,
 ) {
     val context = LocalContext.current
     var query by rememberSaveable { mutableStateOf("") }
@@ -73,6 +74,7 @@ fun HostListScreen(
         Column(Modifier.fillMaxSize()) {
             TabHeader("Bastion") {
                 IconAction(Ico.key, "Keys", onKeys)
+                IconAction(Ico.settings, "Settings", onSettings)
             }
             if (vault.hosts.size > 4) {
                 SearchField(
