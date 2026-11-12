@@ -52,15 +52,21 @@ object Overviews {
     /** Pending updates; a separate run since it can take seconds (checkupdates syncs a temp db). */
     val UPDATES_SCRIPT = """
         if command -v checkupdates >/dev/null 2>&1; then echo pacman; checkupdates 2>/dev/null | wc -l
+        elif command -v pacman >/dev/null 2>&1; then echo pacman-local; pacman -Qu 2>/dev/null | wc -l
         elif command -v apt >/dev/null 2>&1; then echo apt; apt list --upgradable 2>/dev/null | grep -c upgradable
         elif command -v dnf >/dev/null 2>&1; then echo dnf; dnf -q check-update 2>/dev/null | grep -c '^[a-zA-Z0-9]'
         else echo none; fi
     """.trimIndent()
 
     data class Updates(val manager: String, val count: Int) {
+        /** pacman -Qu only knows what the last database sync knew (no checkupdates installed). */
+        val staleHint: String?
+            get() = if (manager == "pacman-local") "as of the last pacman -Sy · install pacman-contrib for a live check" else null
+        val managerName: String get() = manager.removeSuffix("-local")
+
         val upgradeCommand: String?
             get() = when (manager) {
-                "pacman" -> "sudo pacman -Syu"
+                "pacman", "pacman-local" -> "sudo pacman -Syu"
                 "apt" -> "sudo apt update && sudo apt upgrade"
                 "dnf" -> "sudo dnf upgrade"
                 else -> null

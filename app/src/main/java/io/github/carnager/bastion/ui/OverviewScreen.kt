@@ -170,7 +170,7 @@ private fun UpdatesCard(updates: Overviews.Updates?, checked: Boolean, run: (Str
                     fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
                     color = if ((updates?.count ?: 0) > 0) extra.fg else Palette.Good,
                 )
-                updates?.let { Text("via ${it.manager}", fontSize = 13.sp, color = extra.muted) }
+                updates?.let { Text(listOfNotNull("via ${it.managerName}", it.staleHint).joinToString(" · "), fontSize = 13.sp, color = extra.muted) }
             }
             val command = updates?.upgradeCommand
             if (command != null && updates.count > 0) {

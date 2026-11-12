@@ -67,5 +67,9 @@ class OverviewTest {
         assertEquals(Overviews.Updates("pacman", 12), Overviews.parseUpdates("pacman\n12\n"))
         assertEquals(null, Overviews.parseUpdates("none\n"))
         assertEquals("sudo pacman -Syu", Overviews.parseUpdates("pacman\n0")!!.upgradeCommand)
+        val local = Overviews.parseUpdates("pacman-local\n3")!!
+        assertEquals("pacman", local.managerName)
+        assertEquals("sudo pacman -Syu", local.upgradeCommand)
+        assertTrue(local.staleHint != null)
     }
 }
