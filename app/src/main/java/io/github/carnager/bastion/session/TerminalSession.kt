@@ -6,6 +6,7 @@ import io.github.carnager.bastion.data.Host
 import io.github.carnager.bastion.data.TermScheme
 import io.github.carnager.bastion.ssh.Connector
 import io.github.carnager.bastion.ssh.SshConnection
+import io.github.carnager.bastion.ssh.SshFailure
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -16,7 +17,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.apache.sshd.client.channel.ChannelShell
+import org.apache.sshd.client.channel.PtyCapableChannelSession
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import org.apache.sshd.sftp.client.SftpClient
 import org.apache.sshd.sftp.client.SftpClientFactory
 import org.connectbot.terminal.TerminalEmulator
@@ -26,6 +29,8 @@ import java.time.Duration
 sealed interface SessionStatus {
     data object Connecting : SessionStatus
     data object Connected : SessionStatus
+    /** The connection dropped; trying again ([attempt] counts from 1). */
+    data class Reconnecting(val attempt: Int, val reason: String) : SessionStatus
     /** [error] is null when the remote shell simply exited. */
     data class Ended(val error: String?) : SessionStatus
 }
@@ -35,6 +40,7 @@ class TerminalSession(
     val host: Host,
     private val connector: Connector,
     private val scope: CoroutineScope,
+    private val network: NetworkMonitor,
     /** Effective color scheme; changes apply to the open terminal immediately. */
     val scheme: StateFlow<TermScheme>,
     /** A command the user just ran (Enter on the prompt line, or the input field). */
@@ -51,7 +57,7 @@ class TerminalSession(
 
     private val outgoing = Channel<Outgoing>(Channel.UNLIMITED)
     @Volatile private var connection: SshConnection? = null
-    @Volatile private var shell: ChannelShell? = null
+    @Volatile private var shell: PtyCapableChannelSession? = null
     private var job: Job? = null
 
     val emulator: TerminalEmulator = TerminalEmulatorFactory.create(
@@ -62,7 +68,10 @@ class TerminalSession(
         autoDetectUrls = true,
     )
 
-    val screen: ScreenReader = ScreenReader(emulator)
+    val screen: ScreenReader = ScreenReader(emulator).apply {
+        // tmux draws on the alternate screen; for tmux hosts, that's where the shell lives.
+        alternateIsNormal = host.tmuxSession != null
+    }
 
     /** The shell's directory as reported by OSC 7, if the shell does that. */
     val osc7 = Osc7Sniffer()
@@ -309,7 +318,7 @@ class TerminalSession(
         if (shell == null) return
         val view = screen.read() ?: return
         if (!typedSinceEnter) {
-            CommandLine.capturePrompt(view)?.let {
+            CommandLine.capturePrompt(view, requireMarker = host.tmuxSession != null)?.let {
                 prompt = it
                 promptLines = listOf(view.lines.getOrElse(view.cursorRow - 1) { "" }, it.text)
             }
@@ -356,26 +365,67 @@ class TerminalSession(
         }
     }
 
+    private sealed interface Outcome {
+        /** The shell (or tmux) ended normally, e.g. `exit` or a tmux detach. */
+        data object Exited : Outcome
+        /** The connection broke; worth reconnecting. */
+        data class Lost(val reason: String) : Outcome
+        /** Not worth retrying: login refused, prompt cancelled, broken setup. */
+        data class Fatal(val reason: String) : Outcome
+    }
+
+    @Volatile private var stopReconnecting = false
+
     fun start() {
         if (job?.isActive == true) return
+        stopReconnecting = false
+        job = scope.launch(Dispatchers.IO) { runLoop() }
+    }
+
+    private suspend fun CoroutineScope.runLoop() {
+        var attempt = 0
         _status.value = SessionStatus.Connecting
-        emulator.writeInput("\u001b[2mConnecting to ${host.address}…\u001b[0m\r\n".encodeToByteArray())
-        job = scope.launch(Dispatchers.IO) {
-            try {
-                val conn = connector.connect(host).also { connection = it }
-                val dims = emulator.dimensions
-                val channel = conn.session.createShellChannel().apply {
-                    ptyType = "xterm-256color"
-                    ptyColumns = dims.columns
-                    ptyLines = dims.rows
-                    isRedirectErrorStream = true
+        note("Connecting to ${host.address}…")
+        while (isActive) {
+            val outcome = connectOnce(reconnected = attempt > 0) { attempt = 0 }
+            dropConnection()
+            when (outcome) {
+                Outcome.Exited -> return end(null)
+                is Outcome.Fatal -> return end(outcome.reason)
+                is Outcome.Lost -> {
+                    if (!host.autoReconnect || stopReconnecting) return end(outcome.reason)
+                    attempt++
+                    if (attempt > MAX_ATTEMPTS) return end("Gave up reconnecting: ${outcome.reason}")
+                    if (attempt == 1) note("Connection lost (${outcome.reason}). Reconnecting…")
+                    _status.value = SessionStatus.Reconnecting(attempt, outcome.reason)
+                    waitBeforeRetry(attempt)
+                    if (stopReconnecting) return end(outcome.reason)
                 }
-                channel.open().verify(OPEN_TIMEOUT)
-                shell = channel
-                // The view may have resized while the channel was opening.
-                emulator.dimensions.let { outgoing.trySend(Outgoing.Resize(it.columns, it.rows)) }
-                _status.value = SessionStatus.Connected
-                launch { pumpOutgoing(channel) }
+            }
+        }
+    }
+
+    /** One connection: connect, open the shell (or tmux), read until it ends. */
+    private suspend fun CoroutineScope.connectOnce(reconnected: Boolean, onConnected: () -> Unit): Outcome {
+        try {
+            val conn = connector.connect(host).also { connection = it }
+            val dims = emulator.dimensions
+            val channel: PtyCapableChannelSession = host.tmuxSession?.let { name ->
+                conn.session.createExecChannel("sh -c " + shellQuote(tmuxScript(name))).apply { setUsePty(true) }
+            } ?: conn.session.createShellChannel()
+            channel.ptyType = "xterm-256color"
+            channel.ptyColumns = dims.columns
+            channel.ptyLines = dims.rows
+            channel.isRedirectErrorStream = true
+            channel.open().verify(OPEN_TIMEOUT)
+            shell = channel
+            // The view may have resized while the channel was opening.
+            emulator.dimensions.let { outgoing.trySend(Outgoing.Resize(it.columns, it.rows)) }
+            _status.value = SessionStatus.Connected
+            onConnected()
+            if (reconnected) note(if (host.tmuxSession != null) "Reconnected, back in tmux." else "Reconnected (new shell).")
+            val pump = launch { runCatching { pumpOutgoing(channel) } }
+            try {
                 val input = channel.invertedOut
                 val buffer = ByteArray(16 * 1024)
                 while (isActive) {
@@ -386,16 +436,61 @@ class TerminalSession(
                         emulator.writeInput(buffer, 0, read)
                     }
                 }
-                Log.i(TAG, "Session $id to ${host.label}: remote closed the shell")
-                finish(null)
-            } catch (e: Exception) {
-                Log.w(TAG, "Session $id to ${host.label} failed", e)
-                finish(e.message ?: e.javaClass.simpleName)
+            } finally {
+                pump.cancel()
+            }
+            // A shell that ended on its own sends an exit status; a dead connection doesn't.
+            return if (channel.exitStatus != null || channel.exitSignal != null) {
+                Log.i(TAG, "Session $id to ${host.label}: shell exited")
+                Outcome.Exited
+            } else {
+                Outcome.Lost("connection closed")
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: SshFailure) {
+            Log.w(TAG, "Session $id to ${host.label}: ${e.message}", e)
+            return if (e.retryable) Outcome.Lost(e.message ?: "unreachable") else Outcome.Fatal(e.message ?: "failed")
+        } catch (e: Exception) {
+            Log.w(TAG, "Session $id to ${host.label} dropped", e)
+            return Outcome.Lost(e.message ?: e.javaClass.simpleName)
+        }
+    }
+
+    /** Backoff (1, 2, 4 … 30 s), cut short by a network switch; never before the phone is online. */
+    private suspend fun waitBeforeRetry(attempt: Int) {
+        val seconds = minOf(30L, 1L shl minOf(attempt - 1, 5))
+        val changesBefore = network.changes.value
+        withTimeoutOrNull(seconds * 1000) { network.changes.first { it != changesBefore } }
+        network.network.first { it != null }
+    }
+
+    /** After a network switch the connection may be dead without knowing it: check, and drop it if so. */
+    fun checkAlive() {
+        if (_status.value != SessionStatus.Connected) return
+        scope.launch(Dispatchers.IO) {
+            val alive = withTimeoutOrNull(6_000) { runCatching { execResult("true", null) }.isSuccess } == true
+            if (!alive && _status.value == SessionStatus.Connected) {
+                Log.i(TAG, "Session $id to ${host.label}: no answer after network change")
+                connection?.close()
             }
         }
     }
 
-    private suspend fun pumpOutgoing(channel: ChannelShell) {
+    /** Stop trying to reconnect (the user gave up waiting). */
+    fun stopReconnect() {
+        stopReconnecting = true
+        if (_status.value is SessionStatus.Reconnecting) {
+            job?.cancel()
+            end("Stopped reconnecting")
+        }
+    }
+
+    private fun note(text: String) {
+        runCatching { emulator.writeInput("\r\n\u001b[2m$text\u001b[0m\r\n".encodeToByteArray()) }
+    }
+
+        private suspend fun pumpOutgoing(channel: PtyCapableChannelSession) {
         val out = channel.invertedIn
         for (item in outgoing) {
             when (item) {
@@ -413,17 +508,21 @@ class TerminalSession(
         if (shell != null) outgoing.trySend(Outgoing.Bytes(bytes))
     }
 
-    private fun finish(error: String?) {
-        if (_status.value is SessionStatus.Ended) return
+    /** Closes the current connection but keeps what a reconnect can reuse (sudo password, history). */
+    private fun dropConnection() {
         shell = null
         tools = null
-        sudoPassword = null
         runCatching { sftp?.close() }
         sftp = null
-        connection?.close()
+        runCatching { connection?.close() }
         connection = null
-        val note = if (error == null) "Connection closed." else "Error: $error"
-        runCatching { emulator.writeInput("\r\n\u001b[2m$note\u001b[0m\r\n".encodeToByteArray()) }
+    }
+
+    private fun end(error: String?) {
+        if (_status.value is SessionStatus.Ended) return
+        dropConnection()
+        sudoPassword = null
+        note(if (error == null) "Connection closed." else "Error: $error")
         _status.value = SessionStatus.Ended(error)
     }
 
@@ -435,6 +534,7 @@ class TerminalSession(
     }
 
     fun close() {
+        stopReconnecting = true
         runCatching { sftp?.close() }
         sftp = null
         job?.cancel()
@@ -446,10 +546,16 @@ class TerminalSession(
         emulator.close()
     }
 
-    private companion object {
+    internal companion object {
         const val CR: Byte = 0x0d
         const val LIST_CACHE_MS = 30_000L
         val EXIT_WAIT: Duration = Duration.ofSeconds(5)
         val OPEN_TIMEOUT: Duration = Duration.ofSeconds(20)
+        const val MAX_ATTEMPTS = 40
+
+        /** Attach to (or create) the tmux session; without tmux, fall back to a login shell. */
+        internal fun tmuxScript(name: String): String =
+            "if command -v tmux >/dev/null 2>&1; then exec tmux new-session -A -s ${shellQuote(name)}; " +
+                "else echo 'tmux is not installed here, starting a normal shell.'; exec \"\${SHELL:-/bin/sh}\" -l; fi"
     }
 }

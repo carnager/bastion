@@ -3,6 +3,7 @@ package io.github.carnager.bastion
 import android.app.Application
 import io.github.carnager.bastion.data.Settings
 import io.github.carnager.bastion.data.VaultStore
+import io.github.carnager.bastion.session.NetworkMonitor
 import io.github.carnager.bastion.session.SessionManager
 import io.github.carnager.bastion.session.SessionService
 import io.github.carnager.bastion.ssh.Connector
@@ -39,7 +40,7 @@ class App : Application() {
         store = VaultStore(this)
         settings = Settings(this)
         lock = AppLock(settings)
-        sessions = SessionManager(store, settings, Connector(store, prompter))
+        sessions = SessionManager(store, settings, Connector(store, prompter), NetworkMonitor(this))
         CoroutineScope(SupervisorJob() + Dispatchers.Main).launch {
             sessions.sessions.map { it.size }.distinctUntilChanged().collect { SessionService.update(this@App, it) }
         }

@@ -242,6 +242,20 @@ fun TerminalScreen(
             )
             }
         }
+        (status as? SessionStatus.Reconnecting)?.let { r ->
+            Row(
+                Modifier.fillMaxWidth().background(BarColor).padding(start = 12.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                androidx.compose.material3.CircularProgressIndicator(Modifier.size(16.dp), color = Accent, strokeWidth = 2.dp)
+                Text(
+                    "Connection lost · reconnecting" + if (r.attempt > 1) " (attempt ${r.attempt})" else "…",
+                    color = KeyText, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = session::stopReconnect) { Text("Stop", color = KeyText) }
+            }
+        }
         if (status is SessionStatus.Ended) {
             Row(
                 Modifier.fillMaxWidth().background(BarColor).padding(horizontal = 8.dp),

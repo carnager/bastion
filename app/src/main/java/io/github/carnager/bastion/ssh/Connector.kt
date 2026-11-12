@@ -22,7 +22,8 @@ import java.io.Closeable
 import java.security.PublicKey
 import java.time.Duration
 
-class SshFailure(message: String, cause: Throwable? = null) : Exception(message, cause)
+/** [retryable]: worth trying again later (network); false for refused logins, cancelled prompts, bad setup. */
+class SshFailure(message: String, cause: Throwable? = null, val retryable: Boolean = true) : Exception(message, cause)
 
 /**
  * An authenticated session to the target plus the jump sessions it is tunnelled through.
@@ -42,7 +43,12 @@ class Connector(private val store: VaultRepository, private val prompter: Prompt
         keyIdentityProvider = KeyIdentityProvider.EMPTY_KEYS_PROVIDER
         serverKeyVerifier = VaultHostKeyVerifier()
         forwardingFilter = AcceptAllForwardingFilter.INSTANCE
-        CoreModuleProperties.HEARTBEAT_INTERVAL.set(this, Duration.ofSeconds(30))
+        // Keep-alives that expect an answer: phones lose connections silently (network switch,
+        // NAT timeout), and only an unanswered request reveals that. 3 misses = connection dead.
+        CoreModuleProperties.HEARTBEAT_INTERVAL.set(this, Duration.ofSeconds(15))
+        CoreModuleProperties.HEARTBEAT_REQUEST.set(this, "keepalive@openssh.com")
+        CoreModuleProperties.HEARTBEAT_REPLY_WAIT.set(this, Duration.ofSeconds(10))
+        CoreModuleProperties.HEARTBEAT_NO_REPLY_MAX.set(this, 3)
         // Send keystrokes immediately (like OpenSSH for interactive sessions) instead of
         // letting Nagle hold small packets back until the previous one is acknowledged.
         CoreModuleProperties.TCP_NODELAY.set(this, true)
@@ -53,7 +59,7 @@ class Connector(private val store: VaultRepository, private val prompter: Prompt
         val vault = store.vault.value
         val hops = when (val chain = resolveChain(target, vault)) {
             is ChainResult.Ok -> chain.hops
-            is ChainResult.Error -> throw SshFailure(chain.message)
+            is ChainResult.Error -> throw SshFailure(chain.message, retryable = false)
         }
         val open = mutableListOf<ClientSession>()
         try {
@@ -98,7 +104,7 @@ class Connector(private val store: VaultRepository, private val prompter: Prompt
         } catch (e: Exception) {
             session.close(true)
             if (e is SshFailure) throw e
-            throw SshFailure("Login to ${hop.label} failed: ${describe(e)}", e)
+            throw SshFailure("Login to ${hop.label} failed: ${describe(e)}", e, retryable = false)
         }
         return session
     }
@@ -107,7 +113,7 @@ class Connector(private val store: VaultRepository, private val prompter: Prompt
         when (hop.auth) {
             AuthMethod.KEY -> {
                 val key = store.vault.value.key(hop.keyId)
-                    ?: throw SshFailure("${hop.label} has no key selected.")
+                    ?: throw SshFailure("${hop.label} has no key selected.", retryable = false)
                 SshKeys.parse(key.name, key.privateKey, key.passphrase).forEach(session::addPublicKeyIdentity)
             }
             AuthMethod.PASSWORD -> {
@@ -129,7 +135,7 @@ class Connector(private val store: VaultRepository, private val prompter: Prompt
                 }
                 answer.value
             }
-            else -> throw SshFailure("Login to ${hop.label} cancelled.")
+            else -> throw SshFailure("Login to ${hop.label} cancelled.", retryable = false)
         }
 
     /** Checks host keys against the vault, keyed by the saved host name rather than the tunnel address. */

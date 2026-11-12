@@ -225,6 +225,7 @@ private fun SessionRow(session: TerminalSession, first: Boolean, onClick: () -> 
                 when (status) {
                     SessionStatus.Connecting -> "Connecting…"
                     SessionStatus.Connected -> session.host.address
+                    is SessionStatus.Reconnecting -> "Reconnecting…"
                     is SessionStatus.Ended -> (status as SessionStatus.Ended).error ?: "Disconnected"
                 },
                 fontSize = 13.sp, color = extra.muted, maxLines = 1, overflow = TextOverflow.Ellipsis,
@@ -240,6 +241,7 @@ fun StatusDot(status: SessionStatus) {
         when (status) {
             SessionStatus.Connecting -> Palette.Amber
             SessionStatus.Connected -> Palette.Good
+            is SessionStatus.Reconnecting -> Palette.Amber
             is SessionStatus.Ended -> if (status.error != null) Palette.Bad else extra.muted
         },
     )

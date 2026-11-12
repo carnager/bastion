@@ -23,6 +23,7 @@ class SessionManager(
     private val store: VaultRepository,
     private val settings: Settings,
     private val connector: Connector,
+    private val network: NetworkMonitor,
 ) {
     private val scope = CoroutineScope(SupervisorJob())
     private val _sessions = MutableStateFlow<List<TerminalSession>>(emptyList())
@@ -37,7 +38,7 @@ class SessionManager(
         val scheme = combine(settings.schemeId, store.vault.map { it.host(host.id)?.colorScheme }) { global, own ->
             ColorSchemes.orDefault(own ?: global)
         }.stateIn(scope, SharingStarted.Eagerly, ColorSchemes.orDefault(host.colorScheme ?: settings.schemeId.value))
-        val session = TerminalSession(nextId++, host, connector, scope, scheme, onCommand = { command ->
+        val session = TerminalSession(nextId++, host, connector, scope, network, scheme, onCommand = { command ->
             if (settings.suggestions.value) {
                 scope.launch(Dispatchers.IO) {
                     store.update { v ->
@@ -49,6 +50,17 @@ class SessionManager(
         _sessions.update { it + session }
         session.start()
         return session
+    }
+
+    init {
+        // After a network switch, every connected session checks it still gets answers.
+        scope.launch {
+            var last = network.changes.value
+            network.changes.collect { n ->
+                if (n != last) _sessions.value.forEach { it.checkAlive() }
+                last = n
+            }
+        }
     }
 
     fun get(id: Long): TerminalSession? = _sessions.value.firstOrNull { it.id == id }

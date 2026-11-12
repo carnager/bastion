@@ -60,6 +60,7 @@ fun SessionSheet(
                         when (status) {
                             SessionStatus.Connecting -> "Connecting…"
                             SessionStatus.Connected -> session.host.address
+                            is SessionStatus.Reconnecting -> "Reconnecting… (attempt ${status.attempt})"
                             is SessionStatus.Ended -> status.error ?: "Disconnected"
                         },
                         fontSize = 13.sp, color = extra.muted, maxLines = 1, overflow = TextOverflow.Ellipsis,

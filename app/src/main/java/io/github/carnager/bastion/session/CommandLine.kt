@@ -23,12 +23,17 @@ object CommandLine {
         return text to (before.length + screen.cursorCol).coerceAtMost(text.length)
     }
 
-    /** Called right before the first keystroke after a prompt appeared. */
-    fun capturePrompt(screen: Screen): Prompt? {
+    /**
+     * Called right before the first keystroke after a prompt appeared. With [requireMarker]
+     * (inside tmux, where full-screen apps can't be told apart) only text that ends like a
+     * prompt counts.
+     */
+    fun capturePrompt(screen: Screen, requireMarker: Boolean = false): Prompt? {
         if (screen.alternateScreen) return null
         val (text, cursor) = logicalLine(screen)
         val prompt = text.substring(0, cursor)
         if (prompt.isBlank()) return null
+        if (requireMarker && MARKERS.none { prompt.endsWith(it) || prompt.trimEnd().endsWith(it.trim()) }) return null
         return Prompt(prompt, text.substring(cursor).trim())
     }
 

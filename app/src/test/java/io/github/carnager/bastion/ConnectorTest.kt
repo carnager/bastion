@@ -153,6 +153,19 @@ class ConnectorTest {
         assertEquals("127.0.0.1:${target.port}", prompt.endpoint)
     }
 
+    @Test fun failuresSayWhetherRetryingMakesSense() = runBlocking {
+        val store = MemoryVault(vault())
+        // Wrong password: retrying would only hammer the server.
+        store.update { v -> v.copy(hosts = v.hosts.map { if (it.id == "jump") it.copy(password = "nope") else it }) }
+        val login = runCatching { connector(store).connect(store.vault.value.host("jump")!!) }.exceptionOrNull() as SshFailure
+        assertTrue(!login.retryable)
+        // Nothing listening: the server may come back, so it's worth retrying.
+        val gone = Host(id = "gone", name = "gone", hostname = "127.0.0.1", port = 1, username = "x", password = "y")
+        store.update { v -> v.copy(hosts = v.hosts + gone) }
+        val unreachable = runCatching { connector(store).connect(gone) }.exceptionOrNull() as SshFailure
+        assertTrue(unreachable.retryable)
+    }
+
     @Test fun wrongJumpPasswordNamesTheJumpHost() = runBlocking {
         val store = MemoryVault(vault())
         store.update { v -> v.copy(hosts = v.hosts.map { if (it.id == "jump") it.copy(password = "nope") else it }) }

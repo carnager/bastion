@@ -26,6 +26,9 @@ data class Screen(
  * features built on it switch themselves off instead of crashing.
  */
 class ScreenReader(private val emulator: TerminalEmulator) {
+    /** Report the alternate screen as the normal one (tmux hosts: the shell lives there). */
+    @Volatile var alternateIsNormal = false
+
     private val flow: StateFlow<*>? = runCatching {
         emulator.javaClass.getMethod("getSnapshot\$lib").invoke(emulator) as StateFlow<*>
     }.onFailure { Log.w(TAG, "termlib screen snapshot unavailable; command line features off", it) }.getOrNull()
@@ -67,7 +70,7 @@ class ScreenReader(private val emulator: TerminalEmulator) {
                 softWrapped = wrapped,
                 cursorRow = cursorRow,
                 cursorCol = type.method("getCursorCol").invoke(snapshot) as Int,
-                alternateScreen = type.method("getAlternateScreen").invoke(snapshot) as Boolean,
+                alternateScreen = (type.method("getAlternateScreen").invoke(snapshot) as Boolean) && !alternateIsNormal,
                 colors = colors,
             )
         }.onFailure { Log.w(TAG, "Could not read terminal screen", it) }.getOrNull()

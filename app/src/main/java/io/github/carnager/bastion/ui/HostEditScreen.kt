@@ -63,6 +63,9 @@ fun HostEditScreen(
     var keyId by rememberSaveable { mutableStateOf(original.keyId ?: vault.keys.singleOrNull()?.id) }
     var jumpHostId by rememberSaveable { mutableStateOf(original.jumpHostId) }
     var colorScheme by rememberSaveable { mutableStateOf(original.colorScheme) }
+    var autoReconnect by rememberSaveable { mutableStateOf(original.autoReconnect) }
+    var useTmux by rememberSaveable { mutableStateOf(original.tmuxSession != null) }
+    var tmuxName by rememberSaveable { mutableStateOf(original.tmuxSession ?: "bastion") }
     var pickJump by remember { mutableStateOf(false) }
     var pickColors by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -88,6 +91,8 @@ fun HostEditScreen(
                             keyId = if (auth == AuthMethod.KEY) keyId else null,
                             jumpHostId = jumpHostId,
                             colorScheme = colorScheme,
+                            autoReconnect = autoReconnect,
+                            tmuxSession = if (useTmux) tmuxName.trim().ifEmpty { "bastion" } else null,
                         ),
                     )
                 },
@@ -146,6 +151,35 @@ fun HostEditScreen(
                     }
                 }
                 Hint("Reach this host through another saved host, like ssh -J. Jump hosts can be chained.")
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                InputLabel("When the connection drops")
+                InfoCard(radius = 14.dp) {
+                    CardRow(first = true, onClick = { autoReconnect = !autoReconnect }) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Reconnect automatically", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                            Text("When the network changes or the connection dies; not after exit", fontSize = 13.sp, color = extra.muted)
+                        }
+                        AccentSwitch(autoReconnect) { autoReconnect = it }
+                    }
+                    CardRow(onClick = { useTmux = !useTmux }) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Keep the session in tmux", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Reconnects land exactly where you were", fontSize = 13.sp, color = extra.muted)
+                        }
+                        AccentSwitch(useTmux) { useTmux = it }
+                    }
+                    if (useTmux) {
+                        CardRow(onClick = null) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                InputLabel("tmux session name")
+                                TextInput(tmuxName, { tmuxName = it.filter { c -> c.isLetterOrDigit() || c in "-_." } }, mono = true, placeholder = "bastion")
+                            }
+                        }
+                    }
+                }
+                if (useTmux) Hint("Uses an existing session of that name or starts one (tmux new -A). Without tmux on the server, a normal shell starts.")
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {

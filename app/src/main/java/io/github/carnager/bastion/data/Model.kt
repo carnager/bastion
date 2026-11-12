@@ -20,6 +20,10 @@ data class Host(
     val jumpHostId: String? = null,
     /** Terminal color scheme for this host; null follows the global default. */
     val colorScheme: String? = null,
+    /** Reconnect by itself when the connection drops (not after a normal exit). */
+    val autoReconnect: Boolean = true,
+    /** Start in (or reattach to) this tmux session; null for a plain shell. */
+    val tmuxSession: String? = null,
     val lastUsed: Long = 0,
 ) {
     val label: String get() = name.ifBlank { hostname }
