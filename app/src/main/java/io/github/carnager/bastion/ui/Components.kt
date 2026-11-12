@@ -75,7 +75,12 @@ private fun strokeIcon(name: String, d: String, width: Float = 1.9f) = ImageVect
     .build()
 
 object Ico {
-    val key = strokeIcon("key", "M15 7a4 4 0 1 1-3.9 4.9L4 19v-3h3v-3h3l1.1-1.1A4 4 0 0 1 15 7z")
+    // Key from Lucide ("key-round", ISC license).
+    val key = strokeIcon(
+        "key",
+        "M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4zM16.5 7a.5.5 0 1 0 0 1 .5.5 0 0 0 0-1z",
+        1.8f,
+    )
     val term = strokeIcon("term", "M4 5h16v14H4zM8 10l3 2-3 2M13 15h4")
     val search = strokeIcon("search", "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-3.5-3.5", 2f)
     val back = strokeIcon("back", "M15 6l-6 6 6 6", 2f)
@@ -100,7 +105,12 @@ object Ico {
     val power = strokeIcon("power", "M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0", 2f)
     val lock = strokeIcon("lock", "M6.5 10h11a2.5 2.5 0 0 1 2.5 2.5v6a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 18.5v-6A2.5 2.5 0 0 1 6.5 10zM8 10V7a4 4 0 0 1 8 0v3", 2f)
     val fingerprint = strokeIcon("fingerprint", "M7.5 4.6A9 9 0 0 1 21 12v1M3 15.5V12a9 9 0 0 1 1.8-5.4M12 7a5 5 0 0 1 5 5v2a14 14 0 0 1-1 5M7 12a5 5 0 0 1 2.2-4.1M7 12v2a10 10 0 0 1-1.5 5.3M12 11v3a18 18 0 0 1-2 8M15.5 21a20 20 0 0 0 .5-4", 1.5f)
-    val settings = strokeIcon("settings", "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1")
+    // Gear outline from Lucide (ISC license); the eight-ray version looked like a sun / theme toggle.
+    val settings = strokeIcon(
+        "settings",
+        "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z",
+        1.8f,
+    )
 }
 
 // ---- tiles ---------------------------------------------------------------------------
