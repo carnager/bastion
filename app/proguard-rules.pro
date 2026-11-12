@@ -11,3 +11,6 @@
 -dontwarn javax.security.auth.**
 # BouncyCastle LDAP/DANE helpers reference JNDI, which Android lacks; never used here.
 -dontwarn javax.naming.**
+
+# The command line features read termlib's screen snapshot by reflection (see ScreenReader).
+-keep class org.connectbot.terminal.** { *; }

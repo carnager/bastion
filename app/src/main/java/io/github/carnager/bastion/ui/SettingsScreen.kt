@@ -102,6 +102,16 @@ fun SettingsScreen(settings: Settings, onBack: () -> Unit) {
                 }
             }
             Hint("Hosts can override this in their own settings.", Modifier.padding(start = 4.dp))
+            val suggestions by settings.suggestions.collectAsState()
+            InfoCard {
+                CardRow(first = true, onClick = null) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Command suggestions", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Remember commands per host and suggest them while typing", fontSize = 13.sp, color = extra.muted)
+                    }
+                    AccentSwitch(suggestions, settings::setSuggestions)
+                }
+            }
 
             Spacer(Modifier.height(10.dp))
             SectionLabel("About")

@@ -11,7 +11,9 @@ import kotlinx.coroutines.flow.stateIn
 import io.github.carnager.bastion.data.VaultRepository
 import io.github.carnager.bastion.ssh.Connector
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,7 +37,15 @@ class SessionManager(
         val scheme = combine(settings.schemeId, store.vault.map { it.host(host.id)?.colorScheme }) { global, own ->
             ColorSchemes.orDefault(own ?: global)
         }.stateIn(scope, SharingStarted.Eagerly, ColorSchemes.orDefault(host.colorScheme ?: settings.schemeId.value))
-        val session = TerminalSession(nextId++, host, connector, scope, scheme)
+        val session = TerminalSession(nextId++, host, connector, scope, scheme, onCommand = { command ->
+            if (settings.suggestions.value) {
+                scope.launch(Dispatchers.IO) {
+                    store.update { v ->
+                        v.copy(history = v.history + (host.id to CommandLine.remember(v.history[host.id].orEmpty(), command)))
+                    }
+                }
+            }
+        })
         _sessions.update { it + session }
         session.start()
         return session

@@ -34,6 +34,8 @@ class TerminalSession(
     private val scope: CoroutineScope,
     /** Effective color scheme; changes apply to the open terminal immediately. */
     val scheme: StateFlow<TermScheme>,
+    /** A command the user just ran (Enter on the prompt line, or the input field). */
+    private val onCommand: (String) -> Unit = {},
 ) {
     private val _status = MutableStateFlow<SessionStatus>(SessionStatus.Connecting)
     val status: StateFlow<SessionStatus> = _status.asStateFlow()
@@ -52,10 +54,46 @@ class TerminalSession(
     val emulator: TerminalEmulator = TerminalEmulatorFactory.create(
         defaultForeground = Color(scheme.value.argb(scheme.value.foreground)),
         defaultBackground = Color(scheme.value.argb(scheme.value.background)),
-        onKeyboardInput = { bytes -> send(bytes) },
+        onKeyboardInput = { bytes -> beforeInput(bytes); send(bytes) },
         onResize = { size -> if (shell != null) outgoing.trySend(Outgoing.Resize(size.columns, size.rows)) },
         autoDetectUrls = true,
     )
+
+    val screen: ScreenReader = ScreenReader(emulator)
+
+    /** The prompt as captured at the first keystroke after the last Enter. */
+    @Volatile var prompt: CommandLine.Prompt? = null
+        private set
+    private var typedSinceEnter = false
+
+    private fun beforeInput(bytes: ByteArray) {
+        if (shell == null) return
+        val view = screen.read() ?: return
+        if (!typedSinceEnter) {
+            CommandLine.capturePrompt(view)?.let { prompt = it }
+            typedSinceEnter = true
+        }
+        if (bytes.contains(CR)) {
+            // The screen still shows the line as typed: the server hasn't echoed the newline yet.
+            prompt?.let { p -> CommandLine.current(view, p)?.takeIf { it.isNotBlank() }?.let(onCommand) }
+            typedSinceEnter = false
+        }
+    }
+
+    /** What's typed after the prompt right now, or null if unknown (full-screen app, no prompt yet). */
+    fun currentCommand(): String? = screen.read()?.let { CommandLine.current(it, prompt) }
+
+    /** Replace the shell's input line with [text], and run it when [run]. */
+    fun replaceLine(text: String, run: Boolean) {
+        if (shell == null) return
+        send(CommandLine.replaceLine(text, run))
+        if (run) {
+            if (text.isNotBlank()) onCommand(text.trim())
+            typedSinceEnter = false
+        } else {
+            typedSinceEnter = true
+        }
+    }
 
     private val schemeJob = scope.launch(Dispatchers.Main) {
         scheme.collect { s ->
@@ -145,6 +183,7 @@ class TerminalSession(
     }
 
     private companion object {
+        const val CR: Byte = 0x0d
         val OPEN_TIMEOUT: Duration = Duration.ofSeconds(20)
     }
 }

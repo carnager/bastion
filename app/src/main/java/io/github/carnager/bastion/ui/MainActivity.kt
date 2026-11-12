@@ -77,6 +77,8 @@ private fun Root(app: App) {
     val prompt by app.prompter.current.collectAsState()
     val globalScheme by app.settings.schemeId.collectAsState()
     val locked by app.lock.locked.collectAsState()
+    val fontSize by app.settings.fontSize.collectAsState()
+    val suggestionsEnabled by app.settings.suggestions.collectAsState()
 
     if (locked) {
         Box(Modifier.fillMaxSize().background(extra.bg)) { LockScreen(onUnlocked = app.lock::unlocked) }
@@ -127,6 +129,10 @@ private fun Root(app: App) {
                             globalSchemeId = globalScheme,
                             hostSchemeId = vault.host(session.host.id)?.colorScheme,
                             onSetGlobalScheme = app.settings::setSchemeId,
+                            fontSize = fontSize,
+                            onFontSize = app.settings::setFontSize,
+                            history = vault.history[session.host.id].orEmpty(),
+                            suggestionsEnabled = suggestionsEnabled,
                             onSetHostScheme = { id ->
                                 app.store.update { v ->
                                     v.copy(hosts = v.hosts.map { if (it.id == session.host.id) it.copy(colorScheme = id) else it })

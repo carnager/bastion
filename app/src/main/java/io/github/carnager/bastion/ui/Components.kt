@@ -103,6 +103,11 @@ object Ico {
     val shield = strokeIcon("shield", "M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6zM8.5 12l2.5 2.5 4.5-5", 2f)
     val more = strokeIcon("more", "M12 5h.01M12 12h.01M12 19h.01", 3f)
     val power = strokeIcon("power", "M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0", 2f)
+    // Return arrow (run) and arrow-into-line (insert), Lucide-style.
+    val enter = strokeIcon("enter", "M20 4v7a4 4 0 0 1-4 4H4M9 10l-5 5 5 5", 2f)
+    val insert = strokeIcon("insert", "M12 3v12M7 10l5 5 5-5M5 20h14", 2f)
+    val keyboard = strokeIcon("keyboard", "M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2zM6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8")
+    val textSize = strokeIcon("textSize", "M4 7V5h10v2M9 5v14M7 19h4M14 12v-1h7v1M17.5 11v8M16 19h3", 1.8f)
     val lock = strokeIcon("lock", "M6.5 10h11a2.5 2.5 0 0 1 2.5 2.5v6a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 18.5v-6A2.5 2.5 0 0 1 6.5 10zM8 10V7a4 4 0 0 1 8 0v3", 2f)
     val fingerprint = strokeIcon("fingerprint", "M7.5 4.6A9 9 0 0 1 21 12v1M3 15.5V12a9 9 0 0 1 1.8-5.4M12 7a5 5 0 0 1 5 5v2a14 14 0 0 1-1 5M7 12a5 5 0 0 1 2.2-4.1M7 12v2a10 10 0 0 1-1.5 5.3M12 11v3a18 18 0 0 1-2 8M15.5 21a20 20 0 0 0 .5-4", 1.5f)
     // Gear outline from Lucide (ISC license); the eight-ray version looked like a sun / theme toggle.

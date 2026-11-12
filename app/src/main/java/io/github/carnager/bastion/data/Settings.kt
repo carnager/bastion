@@ -36,9 +36,33 @@ class Settings(context: Context) {
         _lockAfterSeconds.value = seconds
     }
 
-    private companion object {
-        const val KEY_SCHEME = "scheme"
-        const val KEY_LOCK = "lock"
-        const val KEY_LOCK_AFTER = "lock_after"
+    private val _fontSize = MutableStateFlow(prefs.getFloat(KEY_FONT, DEFAULT_FONT_SIZE))
+    /** Terminal text size in sp. */
+    val fontSize: StateFlow<Float> = _fontSize.asStateFlow()
+
+    fun setFontSize(size: Float) {
+        val clamped = size.coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE)
+        prefs.edit().putFloat(KEY_FONT, clamped).apply()
+        _fontSize.value = clamped
+    }
+
+    private val _suggestions = MutableStateFlow(prefs.getBoolean(KEY_SUGGESTIONS, true))
+    /** Remember commands per host and suggest them while typing. */
+    val suggestions: StateFlow<Boolean> = _suggestions.asStateFlow()
+
+    fun setSuggestions(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_SUGGESTIONS, enabled).apply()
+        _suggestions.value = enabled
+    }
+
+    companion object {
+        const val DEFAULT_FONT_SIZE = 11f
+        const val MIN_FONT_SIZE = 6f
+        const val MAX_FONT_SIZE = 30f
+        private const val KEY_FONT = "font_size"
+        private const val KEY_SUGGESTIONS = "suggestions"
+        private const val KEY_SCHEME = "scheme"
+        private const val KEY_LOCK = "lock"
+        private const val KEY_LOCK_AFTER = "lock_after"
     }
 }

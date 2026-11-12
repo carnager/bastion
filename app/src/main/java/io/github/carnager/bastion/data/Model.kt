@@ -50,6 +50,8 @@ data class Vault(
     val hosts: List<Host> = emptyList(),
     val keys: List<SshKey> = emptyList(),
     val knownHosts: List<KnownHost> = emptyList(),
+    /** Commands run per host id, newest first. Encrypted with the rest of the vault. */
+    val history: Map<String, List<String>> = emptyMap(),
 ) {
     fun host(id: String?): Host? = id?.let { wanted -> hosts.firstOrNull { it.id == wanted } }
     fun key(id: String?): SshKey? = id?.let { wanted -> keys.firstOrNull { it.id == wanted } }

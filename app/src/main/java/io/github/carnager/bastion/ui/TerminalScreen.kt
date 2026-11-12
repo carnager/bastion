@@ -1,6 +1,12 @@
 package io.github.carnager.bastion.ui
 
 import android.app.Activity
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.focus.FocusRequester
+import io.github.carnager.bastion.session.CommandLine
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -66,7 +72,7 @@ import org.connectbot.terminal.Terminal
 import org.connectbot.terminal.VTermKey
 
 /** Terminal chrome (bars, keys) derived from the active color scheme, so light schemes get light bars. */
-private data class Chrome(val bg: Color, val fg: Color, val bar: Color, val line: Color, val keyBg: Color, val key: Color, val accent: Color) {
+internal data class Chrome(val bg: Color, val fg: Color, val bar: Color, val line: Color, val keyBg: Color, val key: Color, val accent: Color) {
     companion object {
         fun of(s: TermScheme): Chrome {
             val bg = s.color(s.background)
@@ -80,7 +86,7 @@ private data class Chrome(val bg: Color, val fg: Color, val bar: Color, val line
     }
 }
 
-private val LocalChrome = staticCompositionLocalOf { Chrome.of(ColorSchemes.all.first()) }
+internal val LocalChrome = staticCompositionLocalOf { Chrome.of(ColorSchemes.all.first()) }
 private val TerminalBackground: Color @Composable get() = LocalChrome.current.bg
 private val BarColor: Color @Composable get() = LocalChrome.current.bar
 private val KeyText: Color @Composable get() = LocalChrome.current.key
@@ -102,6 +108,10 @@ fun TerminalScreen(
     hostSchemeId: String?,
     onSetGlobalScheme: (String) -> Unit,
     onSetHostScheme: (String?) -> Unit,
+    fontSize: Float,
+    onFontSize: (Float) -> Unit,
+    history: List<String>,
+    suggestionsEnabled: Boolean,
 ) {
     val status by session.status.collectAsState()
     val scheme by session.scheme.collectAsState()
@@ -110,6 +120,28 @@ fun TerminalScreen(
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     var picking by remember { mutableStateOf(false) }
+    var sizing by remember { mutableStateOf(false) }
+    /** Non-null while the input field is open: the text it started with. */
+    var editing by remember(session.id) { mutableStateOf<String?>(null) }
+    val termFocus = remember { FocusRequester() }
+    val openEditor = { editing = session.currentCommand().orEmpty() }
+    val closeEditor: () -> Unit = {
+        editing = null
+        runCatching { termFocus.requestFocus() }
+    }
+    BackHandler(enabled = editing != null) { closeEditor() }
+
+    // What's typed after the (learned) prompt, refreshed as the screen changes.
+    val typed by produceState<String?>(null, session, suggestionsEnabled) {
+        if (!suggestionsEnabled) return@produceState
+        session.screen.changes?.collectLatest {
+            delay(60)
+            value = session.prompt?.let { p -> session.screen.read()?.let { CommandLine.current(it, p) } }
+        }
+    }
+    val suggestions = remember(typed, history, suggestionsEnabled) {
+        if (suggestionsEnabled) CommandLine.suggestions(history, typed.orEmpty()) else emptyList()
+    }
 
     // Status bar icons readable on light schemes; restored when leaving the terminal.
     val view = LocalView.current
@@ -143,13 +175,28 @@ fun TerminalScreen(
             onReconnect = session::reconnect,
             onClose = onClose,
             onColors = { picking = true },
+            onTextSize = { sizing = true },
         )
         // Keyed by session so switching tabs gets a fresh view bound to the other emulator.
         androidx.compose.runtime.key(session.id) {
+            Box(
+                Modifier.weight(1f).fillMaxWidth().terminalGestures(
+                    onPinch = { scale -> onFontSize(fontSize * scale) },
+                    onTap = { position, size ->
+                        // Tapping the line with the cursor opens it in the input field.
+                        val screen = session.screen.read()
+                        if (editing == null && screen != null && !screen.alternateScreen && screen.lines.isNotEmpty()) {
+                            val row = (position.y / (size.height.toFloat() / screen.lines.size)).toInt()
+                            if (row == screen.cursorRow) openEditor()
+                        }
+                    },
+                ),
+            ) {
             Terminal(
                 terminalEmulator = session.emulator,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                initialFontSize = 11.sp,
+                modifier = Modifier.fillMaxSize(),
+                initialFontSize = fontSize.sp,
+                focusRequester = termFocus,
                 backgroundColor = TerminalBackground,
                 foregroundColor = chrome.fg,
                 keyboardEnabled = true,
@@ -164,6 +211,7 @@ fun TerminalScreen(
                     }
                 },
             )
+            }
         }
         if (status is SessionStatus.Ended) {
             Row(
@@ -183,10 +231,29 @@ fun TerminalScreen(
             }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(chrome.line))
-        ExtraKeys(session, modifiers)
+        val edit = editing
+        if (edit != null) {
+            CommandEditor(
+                initial = edit,
+                history = if (suggestionsEnabled) history else emptyList(),
+                onRun = { text -> session.replaceLine(text, run = true); closeEditor() },
+                onInsert = { text -> session.replaceLine(text, run = false); closeEditor() },
+                onClose = closeEditor,
+            )
+        } else if (suggestions.isNotEmpty() && status is SessionStatus.Connected) {
+            SuggestionStrip(suggestions) { picked ->
+                val current = typed.orEmpty()
+                if (picked.startsWith(current)) session.send(picked.removePrefix(current).encodeToByteArray())
+                else session.replaceLine(picked, run = false)
+            }
+        }
+        ExtraKeys(session, modifiers, onEdit = openEditor)
     }
     }
 
+    if (sizing) {
+        TextSizeSheet(fontSize, onFontSize, onDismiss = { sizing = false })
+    }
     if (picking) {
         var onlyThisHost by remember { mutableStateOf(hostSchemeId != null) }
         SchemeSheet(
@@ -215,6 +282,7 @@ private fun SessionBar(
     onReconnect: () -> Unit,
     onClose: () -> Unit,
     onColors: () -> Unit,
+    onTextSize: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
     Row(
@@ -258,6 +326,7 @@ private fun SessionBar(
             }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 DropdownMenuItem(text = { Text("Paste") }, onClick = { menu = false; onPaste() })
+                DropdownMenuItem(text = { Text("Text size") }, onClick = { menu = false; onTextSize() })
                 DropdownMenuItem(text = { Text("Colors") }, onClick = { menu = false; onColors() })
                 DropdownMenuItem(text = { Text("Reconnect") }, onClick = { menu = false; onReconnect() })
                 DropdownMenuItem(text = { Text("Disconnect") }, onClick = { menu = false; onClose() })
@@ -316,11 +385,15 @@ private val KEYS = listOf(
 )
 
 @Composable
-private fun ExtraKeys(session: TerminalSession, modifiers: StickyModifiers) {
+private fun ExtraKeys(session: TerminalSession, modifiers: StickyModifiers, onEdit: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().height(Dimens.keyHeight).background(BarColor),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        Box(
+            Modifier.fillMaxHeight().width(44.dp).padding(2.dp).clip(RoundedCornerShape(5.dp)).clickable(onClick = onEdit),
+            contentAlignment = Alignment.Center,
+        ) { Icon(Ico.keyboard, "Edit line in input field", Modifier.size(20.dp), tint = Accent) }
         // Modifiers stay put; the rest scrolls, so Ctrl is always under the thumb.
         ModifierKey("Ctrl", modifiers.ctrl) { modifiers.ctrl = modifiers.cycle(modifiers.ctrl) }
         ModifierKey("Alt", modifiers.alt) { modifiers.alt = modifiers.cycle(modifiers.alt) }
