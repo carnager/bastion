@@ -144,6 +144,7 @@ class Osc7Sniffer {
             if (!raw.startsWith("file://")) return null
             val path = raw.removePrefix("file://").substringAfter('/', "").let { "/$it" }
             return runCatching { java.net.URLDecoder.decode(path.replace("+", "%2B"), "UTF-8") }.getOrNull()
+                ?.let { if (it.length > 1) it.trimEnd('/') else it }
         }
 
         /** A path shown in the prompt (or the line above it): the last token starting with ~ or /. */

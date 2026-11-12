@@ -57,7 +57,9 @@ import io.github.carnager.bastion.session.Fuzzy
 import io.github.carnager.bastion.session.RemoteLists
 import io.github.carnager.bastion.session.TerminalSession
 import io.github.carnager.bastion.session.shellQuote
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /**
@@ -82,27 +84,39 @@ fun FinderDialog(
     var changingBase by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
 
-    LaunchedEffect(kind, base, refreshTick) {
+    // Typing a path navigates: "/srv/http" searches "http" in /srv, "/srv/http/" lists /srv/http.
+    val pathMode = (kind == FinderKind.FILES || kind == FinderKind.FOLDERS) &&
+        (query.startsWith("/") || query == "~" || query.startsWith("~/"))
+    val searchBase = if (pathMode) query.substringBeforeLast('/', "~").ifEmpty { "/" } else base
+    val searchQuery = if (pathMode) query.substringAfterLast('/', "") else query
+
+    LaunchedEffect(kind, searchBase, refreshTick) {
+        if (pathMode) delay(250) // don't list every folder on the way while typing a path
         items = null
         error = null
         items = if (kind == FinderKind.HISTORY) {
             history
         } else {
-            runCatching { session.list(kind, base, refresh = refreshTick > 0) }
-                .onFailure { error = it.message ?: it.javaClass.simpleName }
-                .getOrDefault(emptyList())
+            try {
+                session.list(kind, searchBase, refresh = refreshTick > 0)
+            } catch (e: CancellationException) {
+                throw e // superseded by a newer listing, not an error
+            } catch (e: Exception) {
+                error = e.message ?: e.javaClass.simpleName
+                emptyList()
+            }
         }
     }
-    LaunchedEffect(items, query) {
+    LaunchedEffect(items, searchQuery) {
         val all = items ?: return@LaunchedEffect
-        results = withContext(Dispatchers.Default) { Fuzzy.filter(query, all) }
+        results = withContext(Dispatchers.Default) { Fuzzy.filter(searchQuery, all) }
     }
     LaunchedEffect(Unit) { focus.requestFocus() }
 
     fun pick(match: Fuzzy.Match) {
         val text = when (kind) {
             FinderKind.FILES, FinderKind.FOLDERS ->
-                shellQuote(if (base == cwd) match.text else RemoteLists.join(base, match.text))
+                shellQuote(if (searchBase == cwd) match.text else RemoteLists.join(searchBase, match.text))
             else -> match.text
         }
         onPick(text, kind)
@@ -123,7 +137,13 @@ fun FinderDialog(
                 ) {
                     Icon(Ico.search, null, Modifier.size(18.dp), tint = extra.muted)
                     Box(Modifier.weight(1f)) {
-                        if (query.isEmpty()) Text("Fuzzy search ${kind.label.lowercase()}", color = extra.muted, fontSize = 15.sp)
+                        if (query.isEmpty()) {
+                        Text(
+                            if (kind == FinderKind.FILES || kind == FinderKind.FOLDERS) "Fuzzy search, or type a /path"
+                            else "Fuzzy search ${kind.label.lowercase()}",
+                            color = extra.muted, fontSize = 15.sp,
+                        )
+                    }
                         BasicTextField(
                             query, { query = it }, Modifier.fillMaxWidth().focusRequester(focus),
                             singleLine = true, textStyle = MonoStyle.copy(fontSize = 15.sp, color = extra.fg), cursorBrush = SolidColor(extra.accent),
@@ -148,14 +168,14 @@ fun FinderDialog(
                     ) {
                         Text("in", fontSize = 13.sp, color = extra.muted)
                         Text(
-                            base, style = MonoStyle, fontSize = 13.sp, color = extra.fg2, maxLines = 1, overflow = TextOverflow.StartEllipsis,
+                            searchBase, style = MonoStyle, fontSize = 13.sp, color = extra.fg2, maxLines = 1, overflow = TextOverflow.StartEllipsis,
                             modifier = Modifier.weight(1f, fill = false),
                         )
                         if (base != "/") TextAction("Up", { base = parentOf(base) })
                         TextAction("Change", { changingBase = true })
                         IconAction(Ico.refresh, "Refresh", { refreshTick++ }, tint = extra.muted, iconSize = 18.dp, size = 40.dp)
                     }
-                    if (!session.cwdIsReported && base == cwd) {
+                    if (!pathMode && !session.cwdIsReported && base == cwd) {
                         Hint(
                             if (cwd == "~") "Couldn’t tell the shell’s folder; searching home." else "Folder taken from your prompt.",
                             Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
