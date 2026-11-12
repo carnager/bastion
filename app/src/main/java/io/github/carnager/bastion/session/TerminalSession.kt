@@ -112,8 +112,15 @@ class TerminalSession(
     suspend fun serviceInfo(unit: String): ServiceInfo = Services.parseShow(unit, exec(Services.showCommand(unit)))
 
     /** Recent journal entries of [unit], plus a notice if journalctl said something else (e.g. no permission). */
-    suspend fun journal(unit: String, lines: Int = 100): Pair<List<LogLine>, String?> =
-        Services.parseJournal(exec("sh -c " + shellQuote(Services.journalCommand(unit, lines))))
+    suspend fun journal(unit: String, lines: Int = 100): Pair<List<LogLine>, String?> {
+        val (entries, notice) = Services.parseJournal(exec("sh -c " + shellQuote(Services.journalCommand(unit, lines))))
+        if (entries.isNotEmpty() || notice != null) return entries to notice
+        // journalctl stays silent without a terminal when it may not read system logs.
+        val groups = runCatching { exec("id -nG; id -u") }.getOrDefault("")
+        val privileged = groups.split(Regex("\\s+")).any { it in Services.LOG_GROUPS || it == "0" }
+        return entries to if (privileged) null else Services.NO_LOG_ACCESS
+
+    }
 
     @Volatile private var sftp: SftpClient? = null
 
@@ -215,11 +222,15 @@ class TerminalSession(
     }
 
     /** Runs [command] on a separate exec channel of the same SSH connection; nothing reaches the shell. */
-    suspend fun exec(command: String, maxBytes: Int = 8 * 1024 * 1024): String = withContext(Dispatchers.IO) {
+    suspend fun exec(command: String, maxBytes: Int = 8 * 1024 * 1024): String = execResult(command, null, maxBytes).first
+
+    /** Like [exec], with optional [stdin] (closed after writing) and the exit status. */
+    suspend fun execResult(command: String, stdin: String?, maxBytes: Int = 8 * 1024 * 1024): Pair<String, Int?> = withContext(Dispatchers.IO) {
         val conn = connection ?: throw IllegalStateException("Not connected")
         val channel = conn.session.createExecChannel(command)
         try {
             channel.open().verify(OPEN_TIMEOUT)
+            channel.invertedIn.use { input -> if (stdin != null) input.write(stdin.toByteArray(Charsets.UTF_8)) }
             val out = java.io.ByteArrayOutputStream()
             val input = channel.invertedOut
             val buffer = ByteArray(64 * 1024)
@@ -228,9 +239,44 @@ class TerminalSession(
                 if (read < 0) break
                 out.write(buffer, 0, read)
             }
-            out.toString(Charsets.UTF_8.name())
+            channel.waitFor(java.util.EnumSet.of(org.apache.sshd.client.channel.ClientChannelEvent.EXIT_STATUS, org.apache.sshd.client.channel.ClientChannelEvent.CLOSED), EXIT_WAIT)
+            out.toString(Charsets.UTF_8.name()) to channel.exitStatus
         } finally {
             channel.close(false)
+        }
+    }
+
+    /** sudo password for this session only: kept in memory, gone on disconnect. */
+    @Volatile private var sudoPassword: String? = null
+
+    /** True if sudo may work without asking: a password was given this session, or NOPASSWD. */
+    suspend fun canSudoQuietly(): Boolean =
+        sudoPassword != null || runCatching { execResult("sudo -n true", null).second == 0 }.getOrDefault(false)
+
+    fun setSudoPassword(password: String) {
+        sudoPassword = password
+    }
+
+    /**
+     * Runs [command] as root without the terminal: `sudo -n` first (NOPASSWD rules, no
+     * question), else `sudo -S` with the remembered password fed on stdin.
+     */
+    suspend fun execSudo(command: String): SudoResult {
+        val inner = "sh -c " + shellQuote(command)
+        val password = sudoPassword
+        val (out, code) = if (password == null) {
+            execResult("sh -c " + shellQuote("sudo -n -- $inner 2>&1"), null)
+        } else {
+            execResult("sh -c " + shellQuote("sudo -S -p '' -- $inner 2>&1"), password + "\n")
+        }
+        return when {
+            password == null && SudoResult.needsPassword(out) -> SudoResult.NeedsPassword
+            password != null && SudoResult.wrongPassword(out) -> {
+                sudoPassword = null
+                SudoResult.WrongPassword
+            }
+            code == 0 || code == null -> SudoResult.Ok(out)
+            else -> SudoResult.Failed(out.trim(), code)
         }
     }
 
@@ -348,6 +394,7 @@ class TerminalSession(
         if (_status.value is SessionStatus.Ended) return
         shell = null
         tools = null
+        sudoPassword = null
         runCatching { sftp?.close() }
         sftp = null
         connection?.close()
@@ -379,6 +426,7 @@ class TerminalSession(
     private companion object {
         const val CR: Byte = 0x0d
         const val LIST_CACHE_MS = 30_000L
+        val EXIT_WAIT: Duration = Duration.ofSeconds(5)
         val OPEN_TIMEOUT: Duration = Duration.ofSeconds(20)
     }
 }

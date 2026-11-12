@@ -33,6 +33,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.carnager.bastion.session.LogLine
 import io.github.carnager.bastion.session.ServiceInfo
+import io.github.carnager.bastion.session.Services
+import io.github.carnager.bastion.session.SudoResult
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.focus.focusRequester
+import kotlinx.coroutines.launch
 import io.github.carnager.bastion.session.TerminalSession
 import io.github.carnager.bastion.session.shellQuote
 import kotlinx.coroutines.CancellationException
@@ -41,7 +48,8 @@ import java.util.Date
 
 /**
  * A systemd service at a glance: state, details, actions and its recent log, instead of
- * `systemctl status` text. Actions needing root run with sudo in the terminal.
+ * `systemctl status` text. Root actions and the log run through sudo in the background,
+ * asking for the password natively when sudo needs one.
  */
 @Composable
 fun ServiceScreen(
@@ -56,6 +64,36 @@ fun ServiceScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var tick by remember { mutableIntStateOf(0) }
     val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf<String?>(null) }
+    var askPassword by remember { mutableStateOf<Pair<Boolean, suspend () -> Unit>?>(null) } // (wrong before, retry)
+    var failure by remember { mutableStateOf<String?>(null) }
+    val q = shellQuote(unit)
+
+    /** Runs [command] as root in the background; asks for the sudo password natively if needed. */
+    suspend fun sudo(label: String, command: String, onOk: (String) -> Unit) {
+        busy = label
+        val result = try {
+            session.execSudo(command)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            SudoResult.Failed(e.message ?: e.javaClass.simpleName, -1)
+        }
+        busy = null
+        when (result) {
+            is SudoResult.Ok -> onOk(result.output)
+            SudoResult.NeedsPassword -> askPassword = false to suspend { sudo(label, command, onOk) }
+            SudoResult.WrongPassword -> askPassword = true to suspend { sudo(label, command, onOk) }
+            is SudoResult.Failed -> failure = result.output.ifBlank { "Exit status ${result.code}" }
+        }
+    }
+
+    suspend fun loadSudoLog() = sudo("Reading log…", Services.journalCommand(unit)) { out ->
+        val (lines, note) = Services.parseJournal(out)
+        log = lines
+        notice = note ?: if (lines.isEmpty()) "No log entries for this service." else null
+    }
 
     LaunchedEffect(unit, tick) {
         error = null
@@ -64,6 +102,9 @@ fun ServiceScreen(
             val (lines, note) = session.journal(unit)
             log = lines
             notice = note
+            // Can't read system logs as this user: try sudo quietly (works with NOPASSWD or a
+            // password already given this session); otherwise the log card offers it.
+            if (lines.isEmpty() && note == Services.NO_LOG_ACCESS && session.canSudoQuietly()) loadSudoLog()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -71,7 +112,14 @@ fun ServiceScreen(
         }
     }
 
-    val q = shellQuote(unit)
+    fun act(label: String, done: String, command: String) {
+        scope.launch {
+            sudo(label, command) {
+                Snack.show(done)
+                tick++
+            }
+        }
+    }
     Column(Modifier.fillMaxSize()) {
         ScreenHeader(unit, onNav = onBack) {
             IconAction(Ico.refresh, "Refresh", { tick++ })
@@ -84,13 +132,59 @@ fun ServiceScreen(
                 i.loadState == "not-found" -> item { WarnBanner { Text("No service called “$unit” on ${session.host.label}.", Modifier.weight(1f), fontSize = 13.sp, color = extra.warnFg) } }
                 else -> {
                     item(key = "state") { StateCard(i) }
-                    item(key = "actions") { Actions(i, q, onRunInTerminal) }
+                    item(key = "actions") { Actions(i, q, busy, ::act, onRunInTerminal) }
                     item(key = "details") { Details(i) }
-                    logSection(log, notice)
+                    logSection(log, notice) { scope.launch { loadSudoLog() } }
                 }
             }
         }
     }
+
+    askPassword?.let { (wrong, retry) ->
+        SudoPasswordDialog(
+            host = session.host.label,
+            wrong = wrong,
+            onSubmit = { password ->
+                askPassword = null
+                session.setSudoPassword(password)
+                scope.launch { retry() }
+            },
+            onDismiss = { askPassword = null },
+        )
+    }
+    failure?.let { output ->
+        AlertDialog(
+            onDismissRequest = { failure = null },
+            title = { Text("That didn’t work") },
+            text = { Text(output.take(1500), style = MonoStyle, fontSize = 12.5.sp) },
+            confirmButton = { TextButton(onClick = { failure = null }) { Text("OK") } },
+        )
+    }
+}
+
+/** Asks for the sudo password; kept in memory for this session only. */
+@Composable
+fun SudoPasswordDialog(host: String, wrong: Boolean, onSubmit: (String) -> Unit, onDismiss: () -> Unit) {
+    var password by remember { mutableStateOf("") }
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { androidx.compose.material3.Icon(Ico.shield, null, tint = extra.link) },
+        title = { Text("sudo on $host") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (wrong) Text("Wrong password, try again.", fontSize = 14.sp, color = extra.red)
+                TextInput(
+                    password, { password = it }, Modifier.focusRequester(focus), secret = true,
+                    keyboard = androidx.compose.ui.text.input.KeyboardType.Password, placeholder = "Your password",
+                )
+                Text("Remembered until you disconnect, never stored.", fontSize = 12.5.sp, color = extra.muted)
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSubmit(password) }, enabled = password.isNotEmpty()) { Text("Continue") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable
@@ -117,24 +211,32 @@ private fun StateCard(info: ServiceInfo) {
 }
 
 @Composable
-private fun Actions(info: ServiceInfo, q: String, run: (String) -> Unit) {
+private fun Actions(
+    info: ServiceInfo,
+    q: String,
+    busy: String?,
+    act: (label: String, done: String, command: String) -> Unit,
+    runInTerminal: (String) -> Unit,
+) {
+    val name = info.unit
+    val idle = busy == null
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         if (info.running) {
-            OutlinedAction("Restart", { run("sudo systemctl restart $q") }, Modifier.weight(1f), icon = Ico.refresh, height = 46.dp)
-            OutlinedAction("Stop", { run("sudo systemctl stop $q") }, Modifier.weight(1f), icon = Ico.power, height = 46.dp, color = extra.red)
+            OutlinedAction("Restart", { act("Restarting…", "Restarted $name", "systemctl restart $q") }, Modifier.weight(1f), icon = Ico.refresh, height = 46.dp, enabled = idle)
+            OutlinedAction("Stop", { act("Stopping…", "Stopped $name", "systemctl stop $q") }, Modifier.weight(1f), icon = Ico.power, height = 46.dp, color = extra.red, enabled = idle)
         } else {
-            OutlinedAction("Start", { run("sudo systemctl start $q") }, Modifier.weight(1f), icon = Ico.enter, height = 46.dp)
+            OutlinedAction("Start", { act("Starting…", "Started $name", "systemctl start $q") }, Modifier.weight(1f), icon = Ico.enter, height = 46.dp, enabled = idle)
         }
     }
     Spacer(Modifier.height(8.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         when (info.enabled) {
-            "enabled" -> OutlinedAction("Don’t start at boot", { run("sudo systemctl disable $q") }, Modifier.weight(1f), height = 46.dp)
-            "disabled" -> OutlinedAction("Start at boot", { run("sudo systemctl enable $q") }, Modifier.weight(1f), height = 46.dp)
+            "enabled" -> OutlinedAction("Don’t start at boot", { act("Updating…", "$name won’t start at boot", "systemctl disable $q") }, Modifier.weight(1f), height = 46.dp, enabled = idle)
+            "disabled" -> OutlinedAction("Start at boot", { act("Updating…", "$name starts at boot", "systemctl enable $q") }, Modifier.weight(1f), height = 46.dp, enabled = idle)
         }
-        OutlinedAction("Follow log", { run("journalctl -u $q -f") }, Modifier.weight(1f), icon = Ico.term, height = 46.dp)
+        OutlinedAction("Follow log", { runInTerminal("journalctl -u $q -f") }, Modifier.weight(1f), icon = Ico.term, height = 46.dp)
     }
-    Hint("Actions run in the terminal, where sudo can ask for your password.", Modifier.padding(start = 4.dp, top = 6.dp, bottom = 12.dp))
+    Hint(busy ?: "Actions run with sudo; you’re asked for the password if needed.", Modifier.padding(start = 4.dp, top = 6.dp, bottom = 12.dp), color = if (busy != null) extra.link else extra.muted)
 }
 
 @Composable
@@ -161,12 +263,17 @@ private fun Details(info: ServiceInfo) {
     Spacer(Modifier.height(16.dp))
 }
 
-private fun LazyListScope.logSection(log: List<LogLine>?, notice: String?) {
+private fun LazyListScope.logSection(log: List<LogLine>?, notice: String?, onSudo: () -> Unit) {
     item(key = "log-label") { SectionLabel("Recent log") }
     when {
         log == null -> item { Hint("Loading log…", Modifier.padding(4.dp)) }
         log.isEmpty() -> item {
-            Hint(notice ?: "No log entries.", Modifier.padding(4.dp))
+            InfoCard {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(notice ?: "No log entries for this service.", fontSize = 14.sp, color = extra.fg2)
+                    OutlinedAction("Show log with sudo", onSudo, Modifier.fillMaxWidth(), icon = Ico.shield, height = 46.dp)
+                }
+            }
         }
         else -> {
             if (notice != null) item(key = "notice") { Hint(notice, Modifier.padding(start = 4.dp, bottom = 6.dp)) }

@@ -29,6 +29,10 @@ data class ServiceInfo(val unit: String, val props: Map<String, String>) {
 data class LogLine(val timeMicros: Long, val priority: Int, val message: String)
 
 object Services {
+    /** Groups whose members may read the whole journal. */
+    val LOG_GROUPS = setOf("systemd-journal", "adm", "wheel")
+    const val NO_LOG_ACCESS = "Your user can’t read system logs (it isn’t in systemd-journal, adm or wheel)."
+
     val PROPERTIES = listOf(
         "Id", "Description", "LoadState", "ActiveState", "SubState", "UnitFileState", "MainPID",
         "ActiveEnterTimestamp", "MemoryCurrent", "CPUUsageNSec", "TasksCurrent", "FragmentPath", "Result",
@@ -90,4 +94,20 @@ object Services {
                 }
             }.thenBy { it.label },
         )
+}
+
+sealed interface SudoResult {
+    data class Ok(val output: String) : SudoResult
+    data object NeedsPassword : SudoResult
+    data object WrongPassword : SudoResult
+    data class Failed(val output: String, val code: Int) : SudoResult
+
+    companion object {
+        fun needsPassword(output: String) =
+            "password is required" in output || "a terminal is required" in output || "askpass" in output
+
+        fun wrongPassword(output: String) =
+            "incorrect password" in output || "Sorry, try again" in output || "no password was provided" in output ||
+                "Authentication failure" in output
+    }
 }
