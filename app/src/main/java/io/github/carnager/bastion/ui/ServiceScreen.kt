@@ -205,7 +205,7 @@ private fun Details(info: ServiceInfo) {
         info.memory?.let { add("Memory" to humanMemory(it)) }
         info.cpuNanos?.let { add("CPU time" to humanDuration(it / 1_000_000)) }
         info.tasks?.let { add("Tasks" to it.toString()) }
-        if (info.enabled.isNotEmpty()) add("At boot" to info.enabled)
+        info.bootText?.let { add("At boot" to it) }
         info.unitFile?.let { add("Unit file" to it) }
     }
     if (rows.isEmpty()) return

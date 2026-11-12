@@ -19,6 +19,21 @@ data class ServiceInfo(val unit: String, val props: Map<String, String>) {
     val since: String? get() = props["ActiveEnterTimestamp"]?.takeIf { it.isNotBlank() && it != "n/a" }
     val unitFile: String? get() = props["FragmentPath"]?.takeIf { it.isNotBlank() }
 
+    /** UnitFileState in words. */
+    val bootText: String?
+        get() = when (enabled) {
+            "" -> null
+            "enabled", "enabled-runtime" -> "Yes"
+            "disabled" -> "No"
+            "static" -> "Only when started by another unit"
+            "indirect" -> "Through another unit"
+            "generated", "transient" -> "Created at runtime"
+            "masked", "masked-runtime" -> "Masked (can’t be started)"
+            "bad" -> "Unit file has errors"
+            "alias" -> "Alias of another unit"
+            else -> enabled
+        }
+
     /** Bytes, or null when systemd doesn't track it ("[not set]" or the uint64 max). */
     val memory: Long? get() = props["MemoryCurrent"]?.toLongOrNull()?.takeIf { it in 0 until Long.MAX_VALUE }
     val cpuNanos: Long? get() = props["CPUUsageNSec"]?.toLongOrNull()?.takeIf { it in 0 until Long.MAX_VALUE }
@@ -54,6 +69,11 @@ object Services {
 
     private val json = Json { ignoreUnknownKeys = true }
 
+    /** Terminal color/cursor codes some services write into their logs. */
+    private val ANSI = Regex("\u001B\\[[0-9;?]*[ -/]*[@-~]|\u001B[@-_]")
+
+    fun stripAnsi(text: String): String = ANSI.replace(text, "")
+
     /**
      * journalctl's JSON lines. MESSAGE can be an array of bytes for non-UTF-8 text. Lines that
      * aren't JSON (e.g. "No journal files were opened due to insufficient permissions") come
@@ -76,7 +96,7 @@ object Services {
             lines += LogLine(
                 timeMicros = (obj["__REALTIME_TIMESTAMP"] as? JsonPrimitive)?.content?.toLongOrNull() ?: 0L,
                 priority = (obj["PRIORITY"] as? JsonPrimitive)?.content?.toIntOrNull() ?: 6,
-                message = message,
+                message = stripAnsi(message),
             )
         }
         return lines to notices.joinToString("\n").ifBlank { null }

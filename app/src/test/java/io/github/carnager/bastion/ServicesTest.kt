@@ -46,6 +46,16 @@ class ServicesTest {
         assertTrue(notice!!.startsWith("Hint:"))
     }
 
+    @Test fun ansiColorsAreStripped() {
+        val (lines, _) = Services.parseJournal("""{"__REALTIME_TIMESTAMP":"1","PRIORITY":"6","MESSAGE":"\u001b[33mGET /wp\u001b[0m 404"}""")
+        assertEquals("GET /wp 404", lines.single().message)
+    }
+
+    @Test fun bootStateInWords() {
+        assertEquals("Unit file has errors", Services.parseShow("x", "UnitFileState=bad").bootText)
+        assertEquals("Yes", Services.parseShow("x", "UnitFileState=enabled").bootText)
+    }
+
     @Test fun commandsQuoteTheUnit() {
         assertTrue(Services.showCommand("my unit").endsWith("-- 'my unit'"))
         assertTrue(Services.journalCommand("a;b").contains("-u 'a;b'"))
