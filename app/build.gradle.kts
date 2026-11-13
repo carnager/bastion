@@ -47,6 +47,10 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Installs next to the release build, with its own hosts and keys.
+            applicationIdSuffix = ".debug"
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
