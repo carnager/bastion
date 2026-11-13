@@ -122,6 +122,25 @@ class TerminalSession(
 
     suspend fun updates(): Overviews.Updates? = Overviews.parseUpdates(exec("sh -c " + shellQuote(Overviews.UPDATES_SCRIPT)))
 
+    suspend fun processes(): List<ProcessInfo> = Processes.parse(exec(Processes.LIST))
+
+    /** Full command line and owner of a process. */
+    suspend fun processDetail(pid: Int): Pair<String, String> =
+        exec("sh -c " + shellQuote(Processes.detail(pid))).lines().let { it.getOrElse(0) { "" }.trim() to it.getOrElse(1) { "" }.trim() }
+
+    /** Sends [signal] as this user; output and exit status (not permitted → caller tries sudo). */
+    suspend fun kill(pid: Int, signal: String): Pair<String, Int?> = execResult("sh -c " + shellQuote("kill -$signal $pid 2>&1"), null)
+
+    suspend fun diskUsage(path: String): UsageScan = DiskUsage.parse(path, exec("sh -c " + shellQuote(DiskUsage.script(path))))
+
+    suspend fun containerEngine(): String = if (tools()?.let { "docker" !in it && "podman" in it } == true) "podman" else "docker"
+
+    /** Containers, or null when the daemon refuses this user (not in the docker group): use sudo then. */
+    suspend fun containers(): List<ContainerInfo>? {
+        val out = exec("sh -c " + shellQuote(Containers.list(containerEngine())))
+        return if (Containers.permissionDenied(out)) null else Containers.parse(out)
+    }
+
     suspend fun serviceInfo(unit: String): ServiceInfo = Services.parseShow(unit, exec(Services.showCommand(unit)))
 
     /** Recent journal entries of [unit], plus a notice if journalctl said something else (e.g. no permission). */

@@ -48,6 +48,9 @@ fun OverviewScreen(
     session: TerminalSession,
     onOpenService: (String) -> Unit,
     onOpenFolder: (String) -> Unit,
+    onOpenProcesses: () -> Unit,
+    onOpenContainers: () -> Unit,
+    onOpenContainer: (String) -> Unit,
     onRunInTerminal: (String) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -91,8 +94,8 @@ fun OverviewScreen(
             item(key = "updates") { UpdatesCard(updates, updatesChecked, onRunInTerminal) }
             if (o.runningServices != null) item(key = "services") { ServicesCard(o, onOpenService) }
             if (o.disks.isNotEmpty()) item(key = "disks") { DisksCard(o.disks, onOpenFolder) }
-            o.containers?.let { item(key = "containers") { ContainersCard(it) } }
-            if (o.topProcesses.isNotEmpty()) item(key = "top") { TopCard(o.topProcesses) }
+            o.containers?.let { item(key = "containers") { ContainersCard(it, onOpenContainers, onOpenContainer) } }
+            if (o.topProcesses.isNotEmpty()) item(key = "top") { TopCard(o.topProcesses, onOpenProcesses) }
         }
     }
 }
@@ -222,17 +225,17 @@ private fun DisksCard(disks: List<Overview.Disk>, open: (String) -> Unit) {
 }
 
 @Composable
-private fun ContainersCard(containers: List<Overview.Container>) {
+private fun ContainersCard(containers: List<Overview.Container>, openAll: () -> Unit, open: (String) -> Unit) {
     val running = containers.count { it.running }
     Card("Containers") {
-        Text(
-            if (containers.isEmpty()) "No containers" else "$running of ${containers.size} running",
-            fontSize = 15.sp, modifier = Modifier.padding(16.dp),
-        )
+        Row(Modifier.fillMaxWidth().clickable(onClick = openAll).padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(if (containers.isEmpty()) "No containers" else "$running of ${containers.size} running", fontSize = 15.sp, modifier = Modifier.weight(1f))
+            Icon(Ico.chevron, null, Modifier.size(18.dp), tint = extra.muted)
+        }
         containers.take(8).forEach { c ->
             HorizontalDivider(color = extra.line)
             Row(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                Modifier.fillMaxWidth().clickable { open(c.name) }.padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Dot(if (c.running) Palette.Good else extra.muted)
@@ -244,8 +247,13 @@ private fun ContainersCard(containers: List<Overview.Container>) {
 }
 
 @Composable
-private fun TopCard(procs: List<Overview.Proc>) {
+private fun TopCard(procs: List<Overview.Proc>, openAll: () -> Unit) {
     Card("Busiest processes") {
+        Row(Modifier.fillMaxWidth().clickable(onClick = openAll).padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("All processes", fontSize = 15.sp, color = extra.link, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            Icon(Ico.chevron, null, Modifier.size(18.dp), tint = extra.muted)
+        }
+        HorizontalDivider(color = extra.line)
         procs.forEachIndexed { index, p ->
             if (index > 0) HorizontalDivider(color = extra.line)
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {

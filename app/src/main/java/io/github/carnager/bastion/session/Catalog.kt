@@ -96,20 +96,20 @@ object Catalog {
         CatalogEntry("log-kernel", LOGS, "Kernel messages", "journalctl -k -n 100 --no-pager", listOf("journalctl")),
         CatalogEntry("log-file", LOGS, "Follow a file", "tail -f -n 100 {file}"),
 
-        CatalogEntry("ctr-ps", CONT, "Running containers", "docker ps", listOf("docker")),
-        CatalogEntry("ctr-all", CONT, "All containers", "docker ps -a", listOf("docker")),
+        CatalogEntry("ctr-ps", CONT, "Running containers", "docker ps", listOf("docker"), native = "containers"),
+        CatalogEntry("ctr-all", CONT, "All containers", "docker ps -a", listOf("docker"), native = "containers"),
         CatalogEntry("ctr-logs", CONT, "Follow a container’s log", "docker logs -f --tail 200 {container}", listOf("docker")),
         CatalogEntry("ctr-restart", CONT, "Restart a container", "docker restart {container}", listOf("docker"), danger = true),
         CatalogEntry("ctr-shell", CONT, "Shell in a container", "docker exec -it {container} sh", listOf("docker")),
         CatalogEntry("ctr-stats", CONT, "Container resource use", "docker stats --no-stream", listOf("docker")),
 
-        CatalogEntry("proc-cpu", PROC, "Top CPU users", "ps -eo pid,user,comm,%cpu,%mem --sort=-%cpu | head -20"),
-        CatalogEntry("proc-mem", PROC, "Top memory users", "ps -eo pid,user,comm,%mem,rss --sort=-%mem | head -20"),
+        CatalogEntry("proc-cpu", PROC, "Top CPU users", "ps -eo pid,user,comm,%cpu,%mem --sort=-%cpu | head -20", native = "processes"),
+        CatalogEntry("proc-mem", PROC, "Top memory users", "ps -eo pid,user,comm,%mem,rss --sort=-%mem | head -20", native = "processes"),
         CatalogEntry("proc-htop", PROC, "Live process view", "htop", listOf("htop")),
         CatalogEntry("proc-kill", PROC, "Stop a process", "kill {process}", danger = true),
 
         CatalogEntry("disk-free", DISK, "Free space", "df -h"),
-        CatalogEntry("disk-du", DISK, "What’s big in a folder", "du -h --max-depth=1 {folder} 2>/dev/null | sort -h"),
+        CatalogEntry("disk-du", DISK, "What’s big in a folder", "du -h --max-depth=1 {folder} 2>/dev/null | sort -h", native = "disk"),
         CatalogEntry("disk-devices", DISK, "Drives and partitions", "lsblk", listOf("lsblk")),
 
         CatalogEntry("net-ports", NET, "Listening ports", "ss -tulpn", listOf("ss")),

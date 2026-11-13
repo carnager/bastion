@@ -180,8 +180,10 @@ fun CommandsScreen(
                 },
                 query = query,
                 onPick = { item ->
-                    fill = Fill(item.title, item.template, item.danger, native = item.native)
+                    val next = Fill(item.title, item.template, item.danger, native = item.native)
                     query = ""
+                    // Nothing to fill and a native view exists: open it straight away.
+                    if (next.native != null && next.field == null) onOpenNative(next.native, "") else fill = next
                 },
                 onLongPress = { managing = it },
             )

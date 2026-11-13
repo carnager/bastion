@@ -42,6 +42,10 @@ sealed interface Screen {
     data class Commands(val sessionId: Long) : Screen
     data class Files(val sessionId: Long, val path: String? = null) : Screen
     data class Overview(val sessionId: Long) : Screen
+    data class Processes(val sessionId: Long) : Screen
+    data class DiskUsage(val sessionId: Long, val path: String) : Screen
+    data class Containers(val sessionId: Long) : Screen
+    data class Container(val sessionId: Long, val name: String) : Screen
     data class Service(val sessionId: Long, val unit: String) : Screen
 
     /** Screens that slide up like a sheet rather than in from the side. */
@@ -193,7 +197,14 @@ private fun Root(app: App) {
                                 onRun = { command -> session.replaceLine(command, run = true); pop() },
                                 onInsert = { command -> session.replaceLine(command, run = false); pop() },
                                 onEdit = { command -> session.pendingEdit.value = command; pop() },
-                                onOpenNative = { kind, value -> if (kind == "service") push(Screen.Service(session.id, value)) },
+                                onOpenNative = { kind, value ->
+                                    when (kind) {
+                                        "service" -> push(Screen.Service(session.id, value))
+                                        "processes" -> push(Screen.Processes(session.id))
+                                        "containers" -> push(Screen.Containers(session.id))
+                                        "disk" -> push(Screen.DiskUsage(session.id, if (value == "." || value.isEmpty()) session.guessCwd() else value))
+                                    }
+                                },
                                 onBack = ::pop,
                             )
                         }
@@ -202,6 +213,31 @@ private fun Root(app: App) {
                                 session = session,
                                 unit = screen.unit,
                                 // Back to the terminal itself, past the Commands screen.
+                                onRunInTerminal = { command ->
+                                    session.replaceLine(command, run = true)
+                                    stack = stack.dropLastWhile { it !is Screen.Terminal }
+                                },
+                                onBack = ::pop,
+                            )
+                        }
+                        is Screen.Processes -> WithSession(sessions, screen.sessionId, ::pop) { session ->
+                            ProcessesScreen(session = session, onBack = ::pop)
+                        }
+                        is Screen.DiskUsage -> WithSession(sessions, screen.sessionId, ::pop) { session ->
+                            DiskUsageScreen(
+                                session = session,
+                                start = screen.path,
+                                onOpenInFiles = { path -> push(Screen.Files(session.id, path)) },
+                                onBack = ::pop,
+                            )
+                        }
+                        is Screen.Containers -> WithSession(sessions, screen.sessionId, ::pop) { session ->
+                            ContainersScreen(session = session, onOpen = { name -> push(Screen.Container(session.id, name)) }, onBack = ::pop)
+                        }
+                        is Screen.Container -> WithSession(sessions, screen.sessionId, ::pop) { session ->
+                            ContainerScreen(
+                                session = session,
+                                name = screen.name,
                                 onRunInTerminal = { command ->
                                     session.replaceLine(command, run = true)
                                     stack = stack.dropLastWhile { it !is Screen.Terminal }
@@ -223,7 +259,10 @@ private fun Root(app: App) {
                             OverviewScreen(
                                 session = session,
                                 onOpenService = { unit -> push(Screen.Service(session.id, unit)) },
-                                onOpenFolder = { path -> push(Screen.Files(session.id, path)) },
+                                onOpenFolder = { path -> push(Screen.DiskUsage(session.id, path)) },
+                                onOpenProcesses = { push(Screen.Processes(session.id)) },
+                                onOpenContainers = { push(Screen.Containers(session.id)) },
+                                onOpenContainer = { name -> push(Screen.Container(session.id, name)) },
                                 onRunInTerminal = { command ->
                                     session.replaceLine(command, run = true)
                                     stack = stack.dropLastWhile { it !is Screen.Terminal }
