@@ -5,16 +5,19 @@ the everyday chores (reading a log, checking a service, freeing disk space) it
 has real screens, so you don't have to type everything into a tiny terminal.
 
 <p>
-  <img src="screenshots/hosts.png" width="200" alt="Hosts">
-  <img src="screenshots/terminal.png" width="200" alt="Terminal">
-  <img src="screenshots/menu.png" width="200" alt="Session menu">
-  <img src="screenshots/overview.png" width="200" alt="Overview">
+  <img src="screenshots/hosts.png" width="260" alt="Hosts">
+  <img src="screenshots/terminal.png" width="260" alt="Terminal">
+  <img src="screenshots/menu.png" width="260" alt="Session menu">
 </p>
 <p>
-  <img src="screenshots/files.png" width="200" alt="Files">
-  <img src="screenshots/commands.png" width="200" alt="Commands">
-  <img src="screenshots/processes.png" width="200" alt="Processes">
-  <img src="screenshots/disk.png" width="200" alt="Disk usage">
+  <img src="screenshots/overview.png" width="260" alt="Overview">
+  <img src="screenshots/files.png" width="260" alt="Files">
+  <img src="screenshots/viewer.png" width="260" alt="File viewer">
+</p>
+<p>
+  <img src="screenshots/commands.png" width="260" alt="Commands">
+  <img src="screenshots/processes.png" width="260" alt="Processes">
+  <img src="screenshots/disk.png" width="260" alt="Disk usage">
 </p>
 
 ## Connecting
