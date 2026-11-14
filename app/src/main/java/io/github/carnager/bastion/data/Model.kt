@@ -18,6 +18,10 @@ data class Host(
     val keyId: String? = null,
     /** Saved host to tunnel through (OpenSSH ProxyJump). That host may itself have a jump host. */
     val jumpHostId: String? = null,
+    /** The address the jump host reaches this host at (a VPN or LAN address); blank: [hostname]. */
+    val jumpHostname: String = "",
+    /** While the phone is in this network ("192.168.1.0/24"), connect directly and use the jump host only if that fails. */
+    val directSubnet: String = "",
     /** Terminal color scheme for this host; null follows the global default. */
     val colorScheme: String? = null,
     /** Reconnect by itself when the connection drops (not after a normal exit). */
@@ -28,6 +32,7 @@ data class Host(
 ) {
     val label: String get() = name.ifBlank { hostname }
     val address: String get() = if (port == 22) "$username@$hostname" else "$username@$hostname:$port"
+    val hostnameViaJump: String get() = jumpHostname.ifBlank { hostname }
 }
 
 @Serializable

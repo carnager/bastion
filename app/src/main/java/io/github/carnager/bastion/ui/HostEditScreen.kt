@@ -34,6 +34,8 @@ import io.github.carnager.bastion.data.ColorSchemes
 import io.github.carnager.bastion.data.Host
 import io.github.carnager.bastion.data.Vault
 import io.github.carnager.bastion.data.VaultRepository
+import io.github.carnager.bastion.data.Subnet
+import io.github.carnager.bastion.data.currentPrivateSubnet
 import io.github.carnager.bastion.data.jumpCandidates
 import java.util.UUID
 
@@ -62,6 +64,8 @@ fun HostEditScreen(
     var password by rememberSaveable { mutableStateOf(original.password) }
     var keyId by rememberSaveable { mutableStateOf(original.keyId ?: vault.keys.singleOrNull()?.id) }
     var jumpHostId by rememberSaveable { mutableStateOf(original.jumpHostId) }
+    var jumpHostname by rememberSaveable { mutableStateOf(original.jumpHostname) }
+    var directSubnet by rememberSaveable { mutableStateOf(original.directSubnet) }
     var colorScheme by rememberSaveable { mutableStateOf(original.colorScheme) }
     var autoReconnect by rememberSaveable { mutableStateOf(original.autoReconnect) }
     var useTmux by rememberSaveable { mutableStateOf(original.tmuxSession != null) }
@@ -72,7 +76,8 @@ fun HostEditScreen(
     val adder = rememberKeyAdder(store) { keyId = it.id }
 
     val portNumber = port.toIntOrNull()?.takeIf { it in 1..65535 }
-    val valid = hostname.isNotBlank() && username.isNotBlank() && portNumber != null &&
+    val subnetValid = jumpHostId == null || directSubnet.isBlank() || Subnet.parse(directSubnet) != null
+    val valid = hostname.isNotBlank() && username.isNotBlank() && portNumber != null && subnetValid &&
         (auth != AuthMethod.KEY || vault.key(keyId) != null)
 
     Column(Modifier.fillMaxSize().imePadding()) {
@@ -90,6 +95,8 @@ fun HostEditScreen(
                             password = if (auth == AuthMethod.PASSWORD) password else "",
                             keyId = if (auth == AuthMethod.KEY) keyId else null,
                             jumpHostId = jumpHostId,
+                            jumpHostname = if (jumpHostId != null) jumpHostname.trim() else "",
+                            directSubnet = if (jumpHostId != null) directSubnet.trim() else "",
                             colorScheme = colorScheme,
                             autoReconnect = autoReconnect,
                             tmuxSession = if (useTmux) tmuxName.trim().ifEmpty { "bastion" } else null,
@@ -151,6 +158,22 @@ fun HostEditScreen(
                     }
                 }
                 Hint("Reach this host through another saved host, like ssh -J. Jump hosts can be chained.")
+            }
+            if (jumpHostId != null) {
+                LabeledInput(
+                    "Address from the jump host", jumpHostname, { jumpHostname = it.trim() },
+                    placeholder = hostname.ifBlank { "same as Host" }, keyboard = KeyboardType.Uri,
+                    hint = "Where the jump host finds this host, e.g. its VPN address. Empty: the Host above.",
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LabeledInput(
+                        "Direct in network", directSubnet, { directSubnet = it.trim() },
+                        placeholder = "e.g. 192.168.1.0/24", keyboard = KeyboardType.Uri, error = !subnetValid,
+                        hint = "In this network, connect to the Host directly; the jump host is used only if that fails.",
+                    )
+                    val here = remember { currentPrivateSubnet()?.toString() }
+                    if (here != null && here != directSubnet) SelectChip("Use this network ($here)", false) { directSubnet = here }
+                }
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {

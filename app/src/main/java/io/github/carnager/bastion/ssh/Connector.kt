@@ -4,7 +4,9 @@ import io.github.carnager.bastion.data.AuthMethod
 import io.github.carnager.bastion.data.ChainResult
 import io.github.carnager.bastion.data.Host
 import io.github.carnager.bastion.data.KnownHost
+import io.github.carnager.bastion.data.Subnet
 import io.github.carnager.bastion.data.VaultRepository
+import io.github.carnager.bastion.data.localAddresses
 import io.github.carnager.bastion.data.resolveChain
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -12,6 +14,7 @@ import org.apache.sshd.client.SshClient
 import org.apache.sshd.client.config.hosts.HostConfigEntryResolver
 import org.apache.sshd.client.keyverifier.ServerKeyVerifier
 import org.apache.sshd.client.session.ClientSession
+import org.apache.sshd.client.session.forward.ExplicitPortForwardingTracker
 import org.apache.sshd.common.AttributeRepository
 import org.apache.sshd.common.config.keys.KeyUtils
 import org.apache.sshd.common.keyprovider.KeyIdentityProvider
@@ -19,8 +22,10 @@ import org.apache.sshd.common.util.net.SshdSocketAddress
 import org.apache.sshd.core.CoreModuleProperties
 import org.apache.sshd.server.forward.AcceptAllForwardingFilter
 import java.io.Closeable
+import java.net.InetAddress
 import java.security.PublicKey
 import java.time.Duration
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** [retryable]: worth trying again later (network); false for refused logins, cancelled prompts, bad setup. */
 class SshFailure(message: String, cause: Throwable? = null, val retryable: Boolean = true) : Exception(message, cause)
@@ -29,14 +34,19 @@ class SshFailure(message: String, cause: Throwable? = null, val retryable: Boole
  * An authenticated session to the target plus the jump sessions it is tunnelled through.
  * Closing it closes the whole chain, target first.
  */
-class SshConnection(val session: ClientSession, private val jumps: List<ClientSession>) : Closeable {
+class SshConnection(val session: ClientSession, val jumps: List<ClientSession>) : Closeable {
     override fun close() {
         runCatching { session.close(true) }
         jumps.asReversed().forEach { runCatching { it.close(true) } }
     }
 }
 
-class Connector(private val store: VaultRepository, private val prompter: Prompter) {
+class Connector(
+    private val store: VaultRepository,
+    private val prompter: Prompter,
+    /** The phone's addresses and prefix lengths, to tell whether it is in a host's [Host.directSubnet]. */
+    private val localAddresses: () -> List<Pair<InetAddress, Int>> = ::localAddresses,
+) {
     private val client: SshClient = SshClient.setUpDefaultClient().apply {
         // Nothing from a desktop ~/.ssh: every host, key and known host comes from the vault.
         hostConfigEntryResolver = HostConfigEntryResolver.EMPTY
@@ -61,40 +71,64 @@ class Connector(private val store: VaultRepository, private val prompter: Prompt
             is ChainResult.Ok -> chain.hops
             is ChainResult.Error -> throw SshFailure(chain.message, retryable = false)
         }
+        if (hops.size > 1 && inDirectSubnet(target)) {
+            try {
+                return@withContext openChain(listOf(target), direct = true)
+            } catch (e: DirectFailed) {
+                // Not reachable here after all (or another machine with that address): take the jump host.
+            }
+        }
+        openChain(hops, direct = false)
+    }
+
+    private fun inDirectSubnet(host: Host): Boolean {
+        val subnet = Subnet.parse(host.directSubnet) ?: return false
+        return localAddresses().any { (address, _) -> address in subnet }
+    }
+
+    /** [direct]: the target without its jump hosts; failing to reach it throws [DirectFailed]. */
+    private fun openChain(hops: List<Host>, direct: Boolean): SshConnection {
         val open = mutableListOf<ClientSession>()
         try {
-            var via: SshdSocketAddress? = null
+            var tunnel: ExplicitPortForwardingTracker? = null
             for ((index, hop) in hops.withIndex()) {
-                val session = openSession(hop, via)
+                val session = openSession(hop, tunnel?.boundAddress, direct)
+                // The listener was only there for this one connection, which keeps running without it.
+                // Closed, no other app on the phone can reach the next hop through our tunnel.
+                tunnel?.close()
                 open += session
                 if (index < hops.lastIndex) {
                     val next = hops[index + 1]
                     // Loopback listener tunnelled through this hop, like `ssh -J`. The next hop's SSH
                     // runs end to end through it, so the jump host only ever sees encrypted bytes.
-                    val tracker = session.createLocalPortForwardingTracker(
+                    tunnel = session.createLocalPortForwardingTracker(
                         SshdSocketAddress(SshdSocketAddress.LOCALHOST_IPV4, 0),
-                        SshdSocketAddress(next.hostname, next.port),
+                        SshdSocketAddress(next.hostnameViaJump, next.port),
                     )
-                    via = tracker.boundAddress
                 }
             }
-            SshConnection(open.last(), open.dropLast(1))
+            return SshConnection(open.last(), open.dropLast(1))
         } catch (e: Exception) {
             open.asReversed().forEach { runCatching { it.close(true) } }
-            throw if (e is SshFailure) e else SshFailure(describe(e), e)
+            throw if (e is SshFailure || e is DirectFailed) e else SshFailure(describe(e), e)
         }
     }
 
-    private fun openSession(hop: Host, via: SshdSocketAddress?): ClientSession {
-        val context = AttributeRepository.ofKeyValuePair(HOP, hop)
+    private fun openSession(hop: Host, via: SshdSocketAddress?, direct: Boolean = false): ClientSession {
+        val rejected = AtomicBoolean(false)
+        val otherKey = AtomicBoolean(false)
+        val context = AttributeRepository.ofAttributesMap(
+            mapOf(HOP to hop, DIRECT to direct, REJECTED to rejected, OTHER_KEY to otherKey),
+        )
         val future = if (via == null) {
             client.connect(hop.username, hop.hostname, hop.port, context)
         } else {
             client.connect(hop.username, via.hostName, via.port, context)
         }
         val session = try {
-            future.verify(CONNECT_TIMEOUT).session
+            future.verify(if (direct) DIRECT_TIMEOUT else CONNECT_TIMEOUT).session
         } catch (e: Exception) {
+            if (direct && !rejected.get()) throw DirectFailed(e)  // a key the user said no to stays a no
             val where = if (via == null) "" else " (through jump host)"
             throw SshFailure("Could not reach ${hop.label}$where: ${describe(e)}", e)
         }
@@ -103,6 +137,7 @@ class Connector(private val store: VaultRepository, private val prompter: Prompt
             session.auth().verify(AUTH_TIMEOUT)
         } catch (e: Exception) {
             session.close(true)
+            if (otherKey.get()) throw DirectFailed(e)  // checked during key exchange, so it shows up here
             if (e is SshFailure) throw e
             throw SshFailure("Login to ${hop.label} failed: ${describe(e)}", e, retryable = false)
         }
@@ -147,8 +182,17 @@ class Connector(private val store: VaultRepository, private val prompter: Prompt
             val fingerprint = KeyUtils.getFingerPrint(key)
             val known = store.vault.value.knownHosts.firstOrNull { it.endpoint == endpoint }
             if (known != null && known.keyType == keyType && known.fingerprint == fingerprint) return true
+            // Directly, another key most likely means another machine with the same address on a
+            // network that isn't home after all: no alarm, the jump host route checks the real one.
+            if (known != null && session.connectionContext?.getAttribute(DIRECT) == true) {
+                session.connectionContext?.getAttribute(OTHER_KEY)?.set(true)
+                return false
+            }
             val answer = prompter.askBlocking(Prompt.HostKey(endpoint, keyType, fingerprint, known?.fingerprint))
-            if (answer != PromptAnswer.Accepted) return false
+            if (answer != PromptAnswer.Accepted) {
+                session.connectionContext?.getAttribute(REJECTED)?.set(true)
+                return false
+            }
             store.update { vault ->
                 vault.copy(knownHosts = vault.knownHosts.filterNot { it.endpoint == endpoint } +
                     KnownHost(endpoint, keyType, fingerprint))
@@ -159,7 +203,12 @@ class Connector(private val store: VaultRepository, private val prompter: Prompt
 
     private companion object {
         val HOP = AttributeRepository.AttributeKey<Host>()
+        val DIRECT = AttributeRepository.AttributeKey<Boolean>()
+        val REJECTED = AttributeRepository.AttributeKey<AtomicBoolean>()
+        val OTHER_KEY = AttributeRepository.AttributeKey<AtomicBoolean>()
         val CONNECT_TIMEOUT: Duration = Duration.ofSeconds(15)
+        /** Short: the direct try is only a shortcut, the jump host is the way that works everywhere. */
+        val DIRECT_TIMEOUT: Duration = Duration.ofSeconds(4)
         val AUTH_TIMEOUT: Duration = Duration.ofSeconds(60)
 
         fun describe(e: Throwable): String {
@@ -169,6 +218,9 @@ class Connector(private val store: VaultRepository, private val prompter: Prompt
         }
     }
 }
+
+/** The direct try didn't reach the right machine; the caller goes through the jump host instead. */
+private class DirectFailed(cause: Throwable) : Exception(cause)
 
 private class PasswordInteraction(private val password: String) : org.apache.sshd.client.auth.keyboard.UserInteraction {
     override fun interactive(

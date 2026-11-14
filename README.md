@@ -23,6 +23,7 @@ has real screens, so you don't have to type everything into a tiny terminal.
 ## Connecting
 
 - Jump hosts, also chained: reach a box on the LAN through your public server.
+  At home it connects directly instead, and falls back to the jump host when that fails.
 - Password or key login. Keys can be generated in the app or imported from a
   file (OpenSSH or PEM, passphrases supported).
 - Host keys are checked and remembered per host.
